@@ -1,13 +1,18 @@
 # Voxel City — project guide for Claude Code
 
 A single-file, browser-based GTA-style 3D driving/exploration game built with Three.js.
-Live: <https://betmoar.github.io/voxel-city/>  ·  Current version: **v46**
+Live: <https://betmoar.github.io/voxel-city/>  ·  Current version: **v50**
 
 ## Files
 
 - **index.html** (a.k.a. sandbox-city.html) — the whole game: Three.js scene, generation,
-  rendering, input, audio, UI. Self-contained; Three.js loads from the jsDelivr CDN at
-  runtime. This is what GitHub Pages serves. Drag into a browser to run locally.
+  rendering, input, audio, UI. Three.js is **vendored locally** under `vendor/three/` (see
+  below), so the page is fully self-contained — no CDN/internet needed at runtime. This is
+  what GitHub Pages serves. Drag into a browser to run locally.
+- **vendor/three/** — local copy of Three.js (`three.module.js` + the minimal `addons/`
+  closure the game imports) and its LICENSE. The importmap in index.html points at these.
+  Re-vendor with `node vendor/update-three.mjs` (pulls from the npm registry, since the
+  jsDelivr CDN is blocked in some sandboxes). Add new addons to that script's ENTRY_POINTS.
 - **world.mjs** — the canonical PURE world logic (terrain, cityness, zones, road network,
   building placement). No Three.js, no DOM. The harness imports this.
 - **harness.mjs** — headless regression checks (`node harness.mjs --sync`).
@@ -78,8 +83,5 @@ hand.
 
 ## Known follow-ups / not done
 
-- Traffic lights are static scenery (always show the red lamp); not functional signals.
-- Boardwalks are flat decks (no railings/posts).
-- Three.js is CDN-loaded → site needs internet. Vendor it locally for offline/self-contained.
 - Phase 3.3 (optional): offscreen render + golden-image pixel diff for *visual* glitches the
   data invariants can’t catch (needs headless-gl/Playwright; verify it runs in your env first).

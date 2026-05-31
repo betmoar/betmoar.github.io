@@ -87,8 +87,8 @@
 
 <script type="importmap">
 { "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  "three": "./vendor/three/three.module.js",
+  "three/addons/": "./vendor/three/addons/"
 }}
 </script>
 <script type="module">
@@ -97,7 +97,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-const BUILD = 'v49';   // SINGLE SOURCE OF TRUTH for the version. Bump here only — the
+const BUILD = 'v50';   // SINGLE SOURCE OF TRUTH for the version. Bump here only — the
                        // page <title> and HUD brand are populated from this at load.
 document.title = 'VOXEL CITY — Infinite 8-bit Hustle [' + BUILD + ']';
 { const verEl = document.getElementById('ver'); if (verEl) verEl.textContent = BUILD; }
