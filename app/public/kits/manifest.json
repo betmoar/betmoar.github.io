@@ -3,68 +3,68 @@
     "z0": {
       "ground": {
         "id": "bld_z0_ground",
-        "url": "kits/bld_z0_ground.cf95105f.glb",
+        "url": "kits/bld_z0_ground.b55ab5d2.glb",
         "height": 3.5
       },
       "mid": [
         {
           "id": "bld_z0_mid_0",
-          "url": "kits/bld_z0_mid_0.4eb75b0c.glb",
+          "url": "kits/bld_z0_mid_0.e5c7f6f8.glb",
           "height": 3
         }
       ],
       "roof": {
         "id": "bld_z0_roof",
-        "url": "kits/bld_z0_roof.31557ceb.glb",
+        "url": "kits/bld_z0_roof.d05f297e.glb",
         "height": 2.2
       }
     },
     "z1": {
       "ground": {
         "id": "bld_z1_ground",
-        "url": "kits/bld_z1_ground.8a3e070d.glb",
+        "url": "kits/bld_z1_ground.6d9e2d9b.glb",
         "height": 4
       },
       "mid": [
         {
           "id": "bld_z1_mid_0",
-          "url": "kits/bld_z1_mid_0.39e08eb9.glb",
+          "url": "kits/bld_z1_mid_0.0d56c0d2.glb",
           "height": 3.5
         },
         {
           "id": "bld_z1_mid_1",
-          "url": "kits/bld_z1_mid_1.79e949b8.glb",
+          "url": "kits/bld_z1_mid_1.66ff619f.glb",
           "height": 3.5
         }
       ],
       "roof": {
         "id": "bld_z1_roof",
-        "url": "kits/bld_z1_roof.21221489.glb",
+        "url": "kits/bld_z1_roof.24c378f9.glb",
         "height": 3
       }
     },
     "z2": {
       "ground": {
         "id": "bld_z2_ground",
-        "url": "kits/bld_z2_ground.e675ffbb.glb",
+        "url": "kits/bld_z2_ground.c6da292e.glb",
         "height": 5
       },
       "mid": [
         {
           "id": "bld_z2_mid_0",
-          "url": "kits/bld_z2_mid_0.87457b3d.glb",
+          "url": "kits/bld_z2_mid_0.486e6821.glb",
           "height": 4
         }
       ],
       "roof": {
         "id": "bld_z2_roof",
-        "url": "kits/bld_z2_roof.9ef6c8dd.glb",
+        "url": "kits/bld_z2_roof.fe6c9157.glb",
         "height": 1.6
       }
     }
   },
   "vehicle": {
     "id": "veh_sedan",
-    "url": "kits/veh_sedan.7f63604b.glb"
+    "url": "kits/veh_sedan.aa603aa7.glb"
   }
 }
