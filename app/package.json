@@ -16,6 +16,7 @@
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.19.3",
     "miniplex": "^2.0.0",
+    "n8ao": "^1.10.1",
     "postprocessing": "^6.39.1",
     "three": "^0.184.0"
   },
