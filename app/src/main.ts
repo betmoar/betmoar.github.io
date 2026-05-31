@@ -60,7 +60,8 @@ const mats: ChunkMaterials = {
 };
 
 const assets = await loadAssets(import.meta.env.BASE_URL);
-const chunks = new ChunkManager(scene, mats, cfg.drawRings, assets.kits);
+const buildingRings = Math.max(1, cfg.drawRings - 1); // buildings within an inner ring (LOD/HLOD-lite)
+const chunks = new ChunkManager(scene, mats, cfg.drawRings, buildingRings, assets.kits);
 
 const post = createPost(renderer, scene, camera, tier);
 const carInstances = new CarInstances(scene, assets.vehicle);
@@ -109,7 +110,7 @@ renderer.setAnimationLoop(() => {
   frames++; acc += dt;
   if (acc >= 0.5) { fps = Math.round(frames / acc); frames = 0; acc = 0; }
   const tod = dayNight.timeOfDay.toFixed(2);
-  hud.textContent = `VOXEL CITY 2 — M5b peds+traffic\ntier ${tier} · ${fps} fps · chunks ${chunks.count} · cars ${carInstances.count} · peds ${pedInstances.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''}`;
+  hud.textContent = `VOXEL CITY 2 — engine\ntier ${tier} · ${fps} fps · chunks ${chunks.count} (bldg ${chunks.buildingCount}) · cars ${carInstances.count} · peds ${pedInstances.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''}`;
 
   post.composer.render();
 });
