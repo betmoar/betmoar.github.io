@@ -101,7 +101,7 @@ import {
   SEED, SEA_LEVEL, CHUNK, SEG, RADIUS, GRID_SP, ROAD_W, LANE, GRID_SP_T, HWY_EVERY, HWY_W, CROSS_EVERY, ROAD_WATER_MARGIN, TL_GREEN, TL_YELLOW, TL_HALF, TL_CYCLE, hash, smooth, valueNoise, rng, terrainRaw, citynessRaw, cityness, urbanCore, zone, blockLevel, terrainHeight, nearestLine, isHighwayLine, roadHalfWidth, crossStreetLine, onRoadTile, groundOrBridge, roadHere, buildRoadNetwork, tlOffset, tlState, isPark, buildingAt, buildingFootprintAt
 } from './world.mjs';
 
-const BUILD = '0.2.3'; // SINGLE SOURCE OF TRUTH for the version (semver: MAJOR.MINOR.PATCH).
+const BUILD = '0.2.4'; // SINGLE SOURCE OF TRUTH for the version (semver: MAJOR.MINOR.PATCH).
                        // Bump here only — page <title> and HUD brand are populated at load.
                        // MINOR for new features, PATCH for fixes, MAJOR for big reworks.
 const VERSION = 'v' + BUILD;
@@ -895,6 +895,10 @@ const carParts={};
 scene.add(car);
 if(GFX.shadows){ car.traverse(o=>{ if(o.isMesh) o.castShadow=true; }); }
 const carState={heading:0,speed:0,x:0,z:0,roll:0};
+// Attract mode: before "CLICK TO START" the car cruises the city on autopilot.
+// `started` flips true on the first click; `auto` is the lane-following state (like NPC cars).
+let started=false;
+const auto={axis:1,dir:1,turnedAt:null};
 
 // ---------- Exhaust/dust particles (single Points cloud = 1 draw call) ----------
 const MAX_PARTS=120;
@@ -1010,9 +1014,11 @@ function updatePolice(dt){
 }
 const keys={};
 addEventListener('keydown',e=>{keys[e.code]=true;
-  if(e.code==='KeyE')toggleOrSteal(); if(e.code==='KeyF')startNearestJob();
-  if(e.code==='KeyR')cycleRadio();
-  if(e.code==='KeyB')buyUpgrade();
+  if(started){                                  // gameplay actions are inert during the attract reel
+    if(e.code==='KeyE')toggleOrSteal(); if(e.code==='KeyF')startNearestJob();
+    if(e.code==='KeyR')cycleRadio();
+    if(e.code==='KeyB')buyUpgrade();
+  }
   if(e.code==='Backquote'){ DEBUG=!DEBUG; dbgHud.style.display=DEBUG?'block':'none'; if(!DEBUG){dbgOverlay.style.display='none';
     // leaving debug: restore everything to normal
     RENDER.wireframe=false; RENDER.normals=false; RENDER.freeze=false;
@@ -1232,7 +1238,8 @@ const lock=document.getElementById('lock');
 // Pointer Lock API is absent on most mobile browsers (iOS Safari etc.) — feature-detect
 // so the tap doesn't throw, and just dismiss the overlay there (no mouse-look on touch).
 const hasPointerLock = typeof renderer.domElement.requestPointerLock === 'function';
-lock.addEventListener('click',()=>{ if(hasPointerLock) renderer.domElement.requestPointerLock(); else lock.style.display='none'; });
+lock.addEventListener('click',()=>{ started=true;   // hand the cruising car over to the player
+  if(hasPointerLock) renderer.domElement.requestPointerLock(); else lock.style.display='none'; });
 document.addEventListener('pointerlockchange',()=>{lock.style.display=document.pointerLockElement===renderer.domElement?'none':'flex';});
 addEventListener('mousemove',e=>{if(document.pointerLockElement!==renderer.domElement||player.inCar)return;
   player.yaw-=e.movementX*0.0022; player.pitch=Math.max(-1.2,Math.min(1.2,player.pitch-e.movementY*0.0022));});
@@ -1427,26 +1434,31 @@ function tickInner(){
 
   if(player.inCar!==_wasInCar){ radioCarState(player.inCar); _wasInCar=player.inCar; }
   if(player.inCar){
-    speedoEl.style.display='block';
-    const braking=keys['KeyS'], throttle=keys['KeyW'];
-    const accel=(throttle?34:0)-(braking?28:0);
-    carState.speed=(carState.speed+accel*dt)*0.96; carState.speed=Math.max(-14,Math.min(maxSpeed,carState.speed));
-    // arcade steering: responsive, grip stays high even at speed
-    const turn=(keys['KeyA']?1:0)-(keys['KeyD']?1:0);
-    const steerRate=2.4*Math.min(1,Math.abs(carState.speed)/3); // tight & quick
-    carState.heading+=turn*dt*steerRate*Math.sign(carState.speed||1);
-    const dx=-Math.sin(carState.heading)*carState.speed*dt;
-    const dz=-Math.cos(carState.heading)*carState.speed*dt;
-    const insideNow=buildingFootprintAt(carState.x,carState.z);
-    const blocked=(x,z)=> terrainHeight(x,z)<SEA_LEVEL || (!insideNow && buildingFootprintAt(x,z));
-    let moved=false;
-    if(!blocked(carState.x+dx, carState.z)){ carState.x+=dx; moved=true; }
-    if(!blocked(carState.x, carState.z+dz)){ carState.z+=dz; moved=true; }
-    if(!moved) carState.speed*=0.4;
+    speedoEl.style.display = started ? 'block' : 'none';
+    let braking=false;
+    if(started){
+      const throttle=keys['KeyW']; braking=keys['KeyS'];
+      const accel=(throttle?34:0)-(braking?28:0);
+      carState.speed=(carState.speed+accel*dt)*0.96; carState.speed=Math.max(-14,Math.min(maxSpeed,carState.speed));
+      // arcade steering: responsive, grip stays high even at speed
+      const turn=(keys['KeyA']?1:0)-(keys['KeyD']?1:0);
+      const steerRate=2.4*Math.min(1,Math.abs(carState.speed)/3); // tight & quick
+      carState.heading+=turn*dt*steerRate*Math.sign(carState.speed||1);
+      const dx=-Math.sin(carState.heading)*carState.speed*dt;
+      const dz=-Math.cos(carState.heading)*carState.speed*dt;
+      const insideNow=buildingFootprintAt(carState.x,carState.z);
+      const blocked=(x,z)=> terrainHeight(x,z)<SEA_LEVEL || (!insideNow && buildingFootprintAt(x,z));
+      let moved=false;
+      if(!blocked(carState.x+dx, carState.z)){ carState.x+=dx; moved=true; }
+      if(!blocked(carState.x, carState.z+dz)){ carState.z+=dz; moved=true; }
+      if(!moved) carState.speed*=0.4;
+      // body roll: lean away from the turn, proportional to speed
+      const targetRoll = -turn*Math.min(1,Math.abs(carState.speed)/20)*0.12;
+      carState.roll += (targetRoll-carState.roll)*Math.min(1,dt*8);
+    } else {
+      autopilotDrive(dt);   // attract reel: cruise the city on its own until CLICK TO START
+    }
     const gh=groundOrBridge(carState.x,carState.z);
-    // body roll: lean away from the turn, proportional to speed
-    const targetRoll = -turn*Math.min(1,Math.abs(carState.speed)/20)*0.12;
-    carState.roll += (targetRoll-carState.roll)*Math.min(1,dt*8);
     car.position.set(carState.x,gh+0.2,carState.z);
     car.rotation.set(0,carState.heading,carState.roll); car.visible=true;
     // brake/reverse lights
@@ -1626,15 +1638,60 @@ function tick(){
   requestAnimationFrame(tick);
 }
 // Find a strong city center near origin so the player starts in the action.
-(function pickSpawn(){
-  let best=[0,0],bc=-1;
-  for(let x=-700;x<=700;x+=28)for(let z=-700;z<=700;z+=28){
-    const h=terrainHeight(x,z);
-    if(h<SEA_LEVEL+2) continue;        // require solid dry land
-    const c=cityness(x,z); if(c>bc){bc=c;best=[x,z];}
+// Attract-mode autopilot: lane-follow the road like an NPC car (reusing the same on-road
+// rules), then drive the player's carState so the existing camera/engine/exhaust just work.
+function autopilotDrive(dt){
+  const SP=11;                                   // gentle cruise speed for the intro reel
+  const oxt=carState.x, ozt=carState.z;
+  if(auto.axis===0){ carState.x+=auto.dir*SP*dt; carState.z=nearestLine(carState.z)+auto.dir*LANE; }
+  else             { carState.z+=auto.dir*SP*dt; carState.x=nearestLine(carState.x)+auto.dir*LANE; }
+  // water/off-road ahead: back off and reverse — stay on asphalt (same rule as traffic)
+  if(terrainHeight(carState.x,carState.z)<SEA_LEVEL+0.3 || !roadHere(carState.x,carState.z)){
+    carState.x=oxt; carState.z=ozt; auto.dir=-auto.dir; auto.turnedAt=null;
   }
-  carState.x=best[0]; carState.z=best[1];
-  player.x=best[0]; player.z=best[1];
+  // turn at genuine intersections only (probe the cross street like the NPC cars do)
+  const moving=auto.axis===0?carState.x:carState.z, line=nearestLine(moving);
+  if(Math.abs(moving-line)<SP*dt*0.9 && auto.turnedAt!==line){
+    auto.turnedAt=line;
+    if(Math.random()<0.4){
+      const na=auto.axis===0?1:0;
+      const nx=auto.axis===0?line:carState.x, nz=auto.axis===0?carState.z:line;
+      const probe=ROAD_W+3, dirs=[];
+      for(const nd of [1,-1]) if(roadHere(na===0?nx+nd*probe:nx, na===0?nz:nz+nd*probe)) dirs.push(nd);
+      if(dirs.length){ carState.x=nx; carState.z=nz; auto.axis=na; auto.dir=dirs[(Math.random()*dirs.length)|0]; }
+    }
+  }
+  carState.speed=SP;                             // feeds the speedo / engine / exhaust
+  // ease the body to face its travel heading (smooth cinematic turns)
+  const target = auto.axis===0 ? (auto.dir>0?-Math.PI/2:Math.PI/2) : (auto.dir>0?Math.PI:0);
+  let d=target-carState.heading; d=Math.atan2(Math.sin(d),Math.cos(d));
+  carState.heading += d*Math.min(1,dt*6);
+  carState.roll += (0-carState.roll)*Math.min(1,dt*4);
+}
+
+(function pickSpawn(){
+  // RANDOM start each load: scan around a few random centres for a real city block, then
+  // seat the car on the nearest road lane (so the attract-mode autopilot can drive away).
+  function bestCityNear(cx,cz){
+    let best=null,bc=0.34;                        // require an actual city (cityness > ~0.35)
+    for(let x=cx-360;x<=cx+360;x+=24)for(let z=cz-360;z<=cz+360;z+=24){
+      if(terrainHeight(x,z)<SEA_LEVEL+2) continue; // dry land only
+      const c=cityness(x,z); if(c>bc){bc=c;best=[x,z];}
+    }
+    return best;
+  }
+  const RANGE=3500; let spot=null;
+  for(let tries=0; tries<40 && !spot; tries++)
+    spot=bestCityNear((Math.random()*2-1)*RANGE,(Math.random()*2-1)*RANGE);
+  if(!spot) spot=bestCityNear(0,0)||[0,0];        // fallback near origin (very rare)
+  const [sx,sz]=spot, lx=nearestLine(sx), lz=nearestLine(sz);
+  let pick=null;
+  for(const dir of [1,-1]){ const cx=lx+dir*LANE; if(roadHere(cx,sz)){ pick={x:cx,z:sz,axis:1,dir}; break; } } // avenue (drive along z)
+  if(!pick) for(const dir of [1,-1]){ const cz=lz+dir*LANE; if(roadHere(sx,cz)){ pick={x:sx,z:cz,axis:0,dir}; break; } } // cross-street (along x)
+  if(!pick) pick={x:sx,z:sz,axis:1,dir:1};         // last-ditch
+  carState.x=pick.x; carState.z=pick.z; player.x=pick.x; player.z=pick.z;
+  auto.axis=pick.axis; auto.dir=pick.dir; auto.turnedAt=null;
+  carState.heading = pick.axis===0 ? (pick.dir>0?-Math.PI/2:Math.PI/2) : (pick.dir>0?Math.PI:0);
 })();
 updateChunks(carState.x,carState.z); updateRepHud(); tick();
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight); if(composer)composer.setSize(innerWidth,innerHeight);});
