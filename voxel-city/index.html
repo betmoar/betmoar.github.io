@@ -192,9 +192,16 @@ const GFX = {
   viewDist: 300,       // draw distance
   bloom: true,         // glow on neon/headlights/windows (post-processing, full-screen cost)
   bloomStrength: 0.9, bloomRadius: 0.6, bloomThreshold: 0.82,
+  // --- realism spikes (v0.3.0); all default-safe, see updateDayNight + skybox loader ---
+  scatterFog: true,    // tint fog toward the sun (warm dawn/dusk) for atmospheric depth
+  fogScatter: 0.55,    // 0 = flat fog (old look), 1 = strong sun-direction tint
+  skybox: false,       // use an equirect photo as background + reflection env (needs vendor/hdri file)
+  skyboxFile: 'city_downtown.jpg', // which panorama under vendor/hdri/ to load
+  skyboxExposure: 0.95,// ACES tone-mapping exposure when a skybox is active (tame bloom blowout)
 };
 const VIEW=GFX.viewDist;
 const scene=new THREE.Scene();
+let skyboxActive=false; // true once an equirect panorama is installed as scene.background/environment
 let SKY=new THREE.Color(0x9fd3ff); scene.background=SKY.clone();
 scene.fog=new THREE.Fog(SKY.clone(),VIEW*0.45,VIEW*0.95);
 const camera=new THREE.PerspectiveCamera(68,innerWidth/innerHeight,0.5,VIEW*1.2);
@@ -228,6 +235,31 @@ if(GFX.bloom){
   composer.setSize(innerWidth,innerHeight);
 }
 
+// ---------- Optional equirectangular skybox + reflection environment ----------
+// Idea from webgl_materials_envmaps_groundprojected: a real city panorama on the horizon plus
+// environment reflections. Kept ultra-light: an LDR .jpg loaded with the CORE TextureLoader (no
+// extra addon), used as BOTH scene.background and scene.environment. Fully optional and
+// self-contained — if GFX.skybox is off, or the file is missing/404s, the procedural sky stays
+// and nothing throws. Drop panoramas in voxel-city/vendor/hdri/ (see that folder's README).
+function installSkybox(){
+  if(!GFX.skybox) return;
+  new THREE.TextureLoader().load(
+    './vendor/hdri/'+GFX.skyboxFile,
+    tex=>{
+      tex.mapping=THREE.EquirectangularReflectionMapping;
+      tex.colorSpace=THREE.SRGBColorSpace;
+      scene.background=tex; scene.environment=tex;
+      skyboxActive=true;
+      // a baked LDR photo blows out under bloom unless we tone-map; ACES keeps highlights sane
+      renderer.toneMapping=THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure=GFX.skyboxExposure;
+    },
+    undefined,
+    ()=>{ console.warn('[skybox] missing vendor/hdri/'+GFX.skyboxFile+' — keeping procedural sky'); }
+  );
+}
+installSkybox();
+
 // ---------- Day/night cycle ----------
 // timeOfDay in [0,1): 0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset.
 let timeOfDay=0.35;                 // start mid-morning
@@ -235,6 +267,8 @@ const DAY_LENGTH=180;               // seconds per full day
 const skyDay=new THREE.Color(0x9fd3ff), skyNight=new THREE.Color(0x0a1026),
       skyDusk=new THREE.Color(0xff8c5a);
 const _tmpA=new THREE.Color(), _tmpB=new THREE.Color();
+// reusable vectors for sun-scattering fog (avoid per-frame allocation)
+const _sunDir=new THREE.Vector3(), _camFwd=new THREE.Vector3();
 function updateDayNight(dt){
   timeOfDay=(timeOfDay+dt/DAY_LENGTH)%1;
   // sun elevation: peaks at noon (0.5), below horizon at night
@@ -253,7 +287,23 @@ function updateDayNight(dt){
   if(elev>0){ _tmpA.copy(skyNight).lerp(skyDay,Math.min(1,elev*2)); }
   else      { _tmpA.copy(skyNight); }
   _tmpA.lerp(skyDusk,duskFactor*0.6);
-  SKY.copy(_tmpA); scene.background.copy(_tmpA); scene.fog.color.copy(_tmpA);
+  SKY.copy(_tmpA);
+  // a skybox owns scene.background; only drive it from the gradient when no skybox is active
+  if(!skyboxActive) scene.background.copy(_tmpA);
+  // ---- sun-scattering fog (idea from webgpu_custom_fog_scattering, done in WebGL color math) ----
+  // base fog = sky colour; when looking toward the sun near the horizon, push it warm; away, cooler.
+  _tmpB.copy(_tmpA);
+  if(GFX.scatterFog && elev>-0.15){
+    // sun world direction (same construction as sun.position above, but as a unit-ish dir)
+    _sunDir.set(Math.cos(ang), Math.max(0.05,elev), 0.5).normalize();
+    camera.getWorldDirection(_camFwd);
+    const toward=Math.max(0,_camFwd.dot(_sunDir));         // 1 looking at sun, 0 perpendicular/away
+    const horizon=Math.max(0,1-Math.abs(elev)*1.5);        // strongest low on the horizon
+    const warm=toward*toward*horizon*GFX.fogScatter;       // squared = tighter glow around the sun
+    _tmpB.lerp(skyDusk,warm*0.7);                           // warm tint toward the sun
+    _tmpB.lerp(skyNight, (1-toward)*horizon*GFX.fogScatter*0.12); // slight cool/desat away from it
+  }
+  scene.fog.color.copy(_tmpB);
   // night flag for headlights/window glow
   isNight = daylight<0.25;
 }
@@ -286,7 +336,11 @@ function onRoad(wx,wz){
 // (world logic imported from world.mjs — see import at top of module)
 
 const terrainMat=new THREE.MeshLambertMaterial({vertexColors:true,flatShading:true});
-const waterMat=new THREE.MeshLambertMaterial({color:0x2f72d6,transparent:true,opacity:0.7});
+// Water is Standard (not Lambert) so it picks up scene.environment reflections when a skybox is
+// active — a glassy sheen on the water is the cheapest payoff of the grounded-envmap idea.
+// With no environment set it just renders as a flat tinted surface, same as before.
+const waterMat=new THREE.MeshStandardMaterial({color:0x2f72d6,transparent:true,opacity:0.72,
+  roughness:0.18, metalness:0.0, envMapIntensity:1.0});
 const buildMat=new THREE.MeshLambertMaterial({vertexColors:true,flatShading:true});
 const roadMat=new THREE.MeshLambertMaterial({vertexColors:true});
 layerMats.terrain.push(terrainMat); layerMats.water.push(waterMat);
