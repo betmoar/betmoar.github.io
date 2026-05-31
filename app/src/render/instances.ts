@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type RAPIER from '@dimforge/rapier3d-compat';
 import { cars, peds } from '../ecs/world-ecs';
 
 const PALETTE = [0x3366ff, 0x33cc66, 0xffaa22, 0xcc3344, 0x9955dd].map((c) => new THREE.Color(c));
@@ -92,5 +93,40 @@ export class PedInstances {
     this.torso.count = i; this.head.count = i;
     this.torso.instanceMatrix.needsUpdate = true; this.head.instanceMatrix.needsUpdate = true;
     if (this.torso.instanceColor) this.torso.instanceColor.needsUpdate = true;
+  }
+}
+
+// Crate rendering: dynamic Rapier bodies synced to an InstancedMesh each frame (position + rotation).
+export class CrateInstances {
+  private mesh: THREE.InstancedMesh;
+  private m = new THREE.Matrix4();
+  private q = new THREE.Quaternion();
+  private p = new THREE.Vector3();
+  private s = new THREE.Vector3(1, 1, 1);
+  count = 0;
+
+  constructor(scene: THREE.Scene, max = 64) {
+    this.mesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(1.2, 1.2, 1.2),
+      new THREE.MeshStandardMaterial({ color: 0xb9853f, roughness: 0.85, metalness: 0 }),
+      max,
+    );
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.mesh.castShadow = true; this.mesh.frustumCulled = false;
+    scene.add(this.mesh);
+  }
+
+  sync(bodies: RAPIER.RigidBody[]): void {
+    let i = 0;
+    for (const b of bodies) {
+      const t = b.translation(), r = b.rotation();
+      this.p.set(t.x, t.y, t.z); this.q.set(r.x, r.y, r.z, r.w);
+      this.m.compose(this.p, this.q, this.s);
+      this.mesh.setMatrixAt(i, this.m);
+      i++;
+    }
+    this.count = i;
+    this.mesh.count = i;
+    this.mesh.instanceMatrix.needsUpdate = true;
   }
 }
