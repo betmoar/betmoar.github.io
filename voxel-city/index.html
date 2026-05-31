@@ -1394,8 +1394,20 @@ function startNearestJob(){
   if(!best){ toast('No job marker nearby — press F on a glowing pad'); return; }
   const j=best.job; scene.remove(j.mesh); best.job=null;
   const here={x:j.x,z:j.z};
-  function far(min,max){const a=Math.random()*Math.PI*2,r=min+Math.random()*(max-min);
-    return {x:here.x+Math.cos(a)*r,z:here.z+Math.sin(a)*r};}
+  // Pick a point [min,max] away that's on DRY LAND. The player (and cars) can't enter water
+  // (movement is blocked at terrainHeight<SEA_LEVEL), so a target in the sea is unreachable and
+  // its marker just floats on the surface — this resamples until it finds land, with a best-effort
+  // fallback to the driest candidate if we're surrounded by water (e.g. a small island).
+  function far(min,max){
+    let best=null,bestH=-Infinity;
+    for(let i=0;i<24;i++){
+      const a=Math.random()*Math.PI*2,r=min+Math.random()*(max-min);
+      const x=here.x+Math.cos(a)*r,z=here.z+Math.sin(a)*r,h=terrainHeight(x,z);
+      if(h>=SEA_LEVEL+1) return {x,z};        // comfortably on land
+      if(h>bestH){bestH=h;best={x,z};}        // remember the driest option seen
+    }
+    return best;                               // all wet: use the highest point (best effort)
+  }
   if(j.type==='delivery'){ active={type:'delivery',targets:[far(80,160)],idx:0,reward:120,label:'DELIVERY: reach the drop-off'}; }
   else if(j.type==='bounty'){ active={type:'bounty',targets:[far(60,140)],idx:0,reward:200,label:'BOUNTY: reach the target'}; }
   else if(j.type==='race'){ const t=[far(60,90)]; for(let i=0;i<2;i++)t.push(far(60,90)); active={type:'race',targets:t,idx:0,reward:300,timeLeft:45,label:'RACE: hit checkpoints in time'}; }
