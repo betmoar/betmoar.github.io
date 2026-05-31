@@ -1,0 +1,62 @@
+name: Deploy GitHub Pages
+
+# Builds the Vite app (app/ -> voxel-city2/) and publishes the WHOLE site so the existing
+# landing page and /voxel-city/ game are preserved alongside the new /voxel-city2/ build.
+#
+# ONE-TIME manual step (repo Settings -> Pages -> Source -> "GitHub Actions") is required to
+# switch the Pages source from branch-serving to this workflow. Until that switch, this workflow
+# is harmless: it runs but the deploy step no-ops/fails without affecting the live branch-served
+# site. Runs only on main, so feature branches never deploy.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install
+        working-directory: app
+        run: npm ci
+      - name: Harness (determinism + invariants gate)
+        working-directory: app
+        run: npm run harness
+      - name: Build app -> voxel-city2/
+        working-directory: app
+        run: npm run build
+      - name: Assemble site (whole repo minus build sources)
+        run: |
+          mkdir -p _site
+          rsync -a --delete \
+            --exclude '.git' --exclude '.github' --exclude 'app' --exclude '_site' \
+            ./ _site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
