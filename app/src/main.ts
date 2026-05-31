@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { detectTier, TIERS } from './core/gfx-tiers';
+import { detectTier, TIERS, type Tier } from './core/gfx-tiers';
 import { createRenderer } from './render/renderer';
 import { createPost } from './render/post';
 import { DayNight } from './render/daynight';
@@ -11,6 +11,7 @@ import { updateTraffic } from './sim/traffic';
 import { updatePeds } from './sim/peds';
 import { CarInstances, PedInstances, CrateInstances } from './render/instances';
 import { PhysicsWorld } from './physics/rapier';
+import { CameraController } from './core/controls';
 import { CHUNK, buildRoadNetwork, terrainHeight } from './world/world';
 
 // ── M4 (engine half) ────────────────────────────────────────────────────────────
@@ -21,7 +22,8 @@ const canvas = document.getElementById('c') as HTMLCanvasElement;
 const hud = document.getElementById('hud') as HTMLDivElement;
 const params = new URLSearchParams(location.search);
 
-const tier = detectTier();
+const tierParam = params.get('tier');
+const tier: Tier = tierParam === 'low' || tierParam === 'medium' || tierParam === 'high' ? tierParam : detectTier();
 const cfg = TIERS[tier];
 const renderer = createRenderer(canvas, tier);
 renderer.toneMapping = THREE.NoToneMapping; // AgX moves into the post chain (after bloom)
@@ -77,8 +79,7 @@ function findStart(): { x: number; z: number } {
   return { x: 0, z: 0 };
 }
 const start = findStart();
-const focus = new THREE.Vector3(start.x, 0, start.z);
-const heading = Math.PI * 0.25;
+const controls = new CameraController(camera, canvas, start);
 
 addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -94,14 +95,9 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
   tNow += dt;
 
-  const speed = 16;
-  focus.x += Math.cos(heading) * speed * dt;
-  focus.z += Math.sin(heading) * speed * dt;
+  controls.update(dt);
+  const focus = controls.focus;
   chunks.update(focus.x, focus.z);
-
-  const camDist = 80, camHeight = 70;
-  camera.position.set(focus.x - Math.cos(heading) * camDist, camHeight, focus.z - Math.sin(heading) * camDist);
-  camera.lookAt(focus.x + Math.cos(heading) * 30, 2, focus.z + Math.sin(heading) * 30);
 
   dayNight.update(dt, focus.x, focus.z, camera);
   water.tick(tNow);
@@ -123,7 +119,7 @@ renderer.setAnimationLoop(() => {
   frames++; acc += dt;
   if (acc >= 0.5) { fps = Math.round(frames / acc); frames = 0; acc = 0; }
   const tod = dayNight.timeOfDay.toFixed(2);
-  hud.textContent = `VOXEL CITY 2 — engine+physics\ntier ${tier} · ${fps} fps · chunks ${chunks.count} (bldg ${chunks.buildingCount}) · cars ${carInstances.count} · peds ${pedInstances.count} · crates ${crateInstances.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''}`;
+  hud.textContent = `VOXEL CITY 2 — engine+physics  [${controls.mode === 'fly' ? 'FLY: WASD+mouse, Esc to release' : 'click to fly'}]\ntier ${tier} · ${fps} fps · chunks ${chunks.count} (bldg ${chunks.buildingCount}) · cars ${carInstances.count} · peds ${pedInstances.count} · crates ${crateInstances.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''}`;
 
   post.composer.render();
 });
