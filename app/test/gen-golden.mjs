@@ -1,11 +1,11 @@
-// Captures an authoritative determinism baseline from the LEGACY voxel-city/world.mjs.
+// Captures an authoritative determinism baseline from the canonical app/src/world/world.ts.
 // world.test.ts replays these same inputs through the ported src/world/world.ts and asserts
 // bit-identical outputs — proving the TS port introduced zero math drift. Re-run only if the
 // canonical world logic intentionally changes:  node app/test/gen-golden.mjs
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import * as W from '../../voxel-city/world.mjs';
+import * as W from '../src/world/world.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -64,7 +64,7 @@ const rngSeqs = [[0, 0, 11], [3, -2, 23], [10, 10, 41]].map(([cx, cz, salt]) => 
 });
 
 const golden = {
-  note: 'Determinism baseline captured from voxel-city/world.mjs. Do not hand-edit.',
+  note: 'Determinism baseline captured from app/src/world/world.ts. Do not hand-edit.',
   seed: W.SEED,
   constants: {
     SEA_LEVEL: W.SEA_LEVEL, CHUNK: W.CHUNK, SEG: W.SEG, RADIUS: W.RADIUS,

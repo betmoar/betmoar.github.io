@@ -5,6 +5,17 @@ import type { ZoneKits } from '../../assets/loaders';
 
 type V3 = [number, number, number];
 
+// Height of the rendered terrain MESH at (x,z): bilinear over the 2-unit vertex grid that
+// buildTerrainGeo tessellates (SEG=24 over CHUNK=48). Matches what's actually drawn, so buildings
+// seat on the visible surface rather than the raw point-sampled height.
+function terrainMeshAt(x: number, z: number): number {
+  const vx0 = Math.floor(x / 2) * 2, vz0 = Math.floor(z / 2) * 2;
+  const tx = (x - vx0) / 2, tz = (z - vz0) / 2;
+  const h00 = terrainHeight(vx0, vz0), h10 = terrainHeight(vx0 + 2, vz0);
+  const h01 = terrainHeight(vx0, vz0 + 2), h11 = terrainHeight(vx0 + 2, vz0 + 2);
+  return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+}
+
 // Push an axis-aligned box (6 quads → 12 tris) with a flat colour. Ported from the legacy addBox.
 function addBox(P: number[], N: number[], C: number[], cx: number, cy: number, cz: number, w: number, h: number, d: number, col: V3): void {
   const x = w / 2, y = h / 2, z = d / 2;
@@ -60,18 +71,22 @@ export function buildBuildingsGeo(cx: number, cz: number, kits: ZoneKits): THREE
       const base = pal[(Math.abs(Math.round(lx) + Math.round(lz) * 3) % pal.length)];
       const kit = kits[B.zn];
 
-      // Seat the building on its HIGHEST footprint corner so no floor is buried, then drop a
-      // foundation skirt down past the LOWEST terrain around the footprint (sampled with a margin)
-      // so no edge floats over falling ground. baseY is where the building proper starts.
-      const baseY = B.highG;
-      let tMin = B.lowG;
-      const mx = B.hw + 2, mz = B.hd + 2;
+      // Robust seating: sample the ACTUAL rendered terrain-mesh height (bilinear over the 2-unit
+      // vertex grid — exactly what buildTerrainGeo draws) across the footprint + margin. Seat the
+      // building on the MAX (never floats above ground) and drop a foundation pad down past the MIN
+      // (never a gap under the low edge). Independent of buildingAt's highG/lowG so it can't drift.
+      let tMax = -Infinity, tMin = Infinity;
+      const mx = B.hw + 1.5, mz = B.hd + 1.5;
       for (let dx = -mx; dx <= mx + 1e-6; dx += mx) {
-        for (let dz = -mz; dz <= mz + 1e-6; dz += mz) tMin = Math.min(tMin, terrainHeight(lx + dx, lz + dz));
+        for (let dz = -mz; dz <= mz + 1e-6; dz += mz) {
+          const h = terrainMeshAt(lx + dx, lz + dz);
+          if (h > tMax) tMax = h; if (h < tMin) tMin = h;
+        }
       }
-      const footH = baseY - (tMin - 0.5);
+      const baseY = tMax;                       // building proper starts here (on the high side)
+      const footH = baseY - (tMin - 1.0);       // pad reaches 1m below the lowest sampled ground
       const fcol: V3 = [base[0] * 0.55, base[1] * 0.55, base[2] * 0.58];
-      addBox(P, N, C, lx, baseY - footH / 2, lz, B.w + 0.6, footH, B.d + 0.6, fcol);
+      addBox(P, N, C, lx, baseY - footH / 2, lz, B.w + 0.8, footH, B.d + 0.8, fcol);
 
       if (kit) {
         const kh: KitHeights = { groundH: kit.ground.height, midHeights: kit.mids.map((m) => m.height), roofH: kit.roof.height };

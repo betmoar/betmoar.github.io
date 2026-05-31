@@ -103,65 +103,41 @@ export function terrainHeight(wx: number, wz: number): number {
   return raw * (1 - k) + level * k;
 }
 
-// ---------- road grid ----------
+// ---------- road grid (clean fully-connected Manhattan grid) ----------
+// Every grid line carries a street in BOTH axes wherever the city supports it, so roads always
+// connect into real blocks (no sparse cross-streets, no stub-trimming fragments). A line is
+// "supported" at a point if the neighbourhood is urban enough and above water. Highways are the
+// wider lines on the HWY_EVERY lattice.
 export function nearestLine(v: number): number { return Math.round(v / GRID_SP) * GRID_SP; }
 export function isHighwayLine(c: number): boolean { return (((Math.round(c / GRID_SP) % HWY_EVERY) + HWY_EVERY) % HWY_EVERY) === 0; }
 export function roadHalfWidth(c: number): number { return isHighwayLine(c) ? HWY_W : ROAD_W; }
-export function crossStreetLine(c: number): boolean {
-  if (isHighwayLine(c)) return true;
-  return (((Math.round(c / GRID_SP) % CROSS_EVERY) + CROSS_EVERY) % CROSS_EVERY) === 0;
+// Kept for API compatibility: in the connected grid every grid line is a cross-street.
+export function crossStreetLine(_c: number): boolean { return true; }
+
+// Is there urban support for a road centred on grid line `line` at the given perpendicular coord?
+// Sampled on BOTH sides of the line so a road only exists where it borders developed land.
+const ROAD_CITY_MIN = 0.18;
+function supportV(lineX: number, wz: number): boolean { // avenue (constant x)
+  return Math.max(cityness(lineX - GRID_SP / 2, wz), cityness(lineX + GRID_SP / 2, wz)) >= ROAD_CITY_MIN;
 }
+function supportH(wx: number, lineZ: number): boolean { // cross-street (constant z)
+  return Math.max(cityness(wx, lineZ - GRID_SP / 2), cityness(wx, lineZ + GRID_SP / 2)) >= ROAD_CITY_MIN;
+}
+
 export function onRoadTile(wx: number, wz: number): boolean {
   const lx = nearestLine(wx), lz = nearestLine(wz);
   const onV = Math.abs(wx - lx) <= roadHalfWidth(lx) + 2;
-  const onH = crossStreetLine(lz) && Math.abs(wz - lz) <= roadHalfWidth(lz) + 2;
+  const onH = Math.abs(wz - lz) <= roadHalfWidth(lz) + 2;
   return onV || onH;
 }
 export function groundOrBridge(wx: number, wz: number): number { return Math.max(terrainHeight(wx, wz), SEA_LEVEL); }
 
-// Road SURFACE before dead-end trimming. Bitmask: 1 = avenue, 2 = cross-street, with city support.
-function roadCore(wx: number, wz: number): number {
-  const lx = nearestLine(wx), lz = nearestLine(wz);
-  const onV = Math.abs(wx - lx) <= roadHalfWidth(lx);
-  const onH = crossStreetLine(lz) && Math.abs(wz - lz) <= roadHalfWidth(lz);
-  if (!onV && !onH) return 0;
-  if (terrainHeight(wx, wz) < SEA_LEVEL + ROAD_WATER_MARGIN) return 0;
-  let m = 0;
-  if (onV) { const a = cityness(lx - GRID_SP / 2, wz), b = cityness(lx + GRID_SP / 2, wz); if (Math.max(a, b) >= 0.3) m |= 1; }
-  if (onH) { const a = cityness(wx, lz - GRID_SP / 2), b = cityness(wx, lz + GRID_SP / 2); if (Math.max(a, b) >= 0.3) m |= 2; }
-  return m;
-}
-const CROSS_SP = CROSS_EVERY * GRID_SP;
-// Avenue at lineX anchored by a real cross-street on BOTH sides of wz, within a few blocks?
-function avenueBracketed(lineX: number, wz: number): boolean {
-  const base = Math.round(wz / CROSS_SP) * CROSS_SP;
-  let below = false, above = false;
-  for (let s = -3; s <= 3; s++) {
-    const L = base + s * CROSS_SP;
-    if (!(roadCore(lineX, L) & 2)) continue;
-    if (L <= wz) below = true; if (L >= wz) above = true;
-  }
-  return below && above;
-}
-// Cross-street at lineZ anchored by a real avenue on BOTH sides of wx?
-function crossBracketed(wx: number, lineZ: number): boolean {
-  const base = Math.round(wx / GRID_SP) * GRID_SP;
-  let left = false, right = false;
-  for (let s = -3; s <= 3; s++) {
-    const L = base + s * GRID_SP;
-    if (!(roadCore(L, lineZ) & 1)) continue;
-    if (L <= wx) left = true; if (L >= wx) right = true;
-  }
-  return left && right;
-}
-
-// THE single road predicate: drivable road surface at (wx,wz), with dead-end stubs trimmed.
+// THE single road predicate: drivable surface at (wx,wz). On a grid line, supported by city, dry.
 export function roadHere(wx: number, wz: number): boolean {
-  const core = roadCore(wx, wz);
-  if (!core) return false;
+  if (terrainHeight(wx, wz) < SEA_LEVEL + ROAD_WATER_MARGIN) return false;
   const lx = nearestLine(wx), lz = nearestLine(wz);
-  if ((core & 1) && avenueBracketed(lx, wz)) return true;
-  if ((core & 2) && crossBracketed(wx, lz)) return true;
+  if (Math.abs(wx - lx) <= roadHalfWidth(lx) && supportV(lx, wz)) return true;  // on an avenue
+  if (Math.abs(wz - lz) <= roadHalfWidth(lz) && supportH(wx, lz)) return true;  // on a cross-street
   return false;
 }
 // Validated road model for a chunk.
