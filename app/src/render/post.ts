@@ -3,6 +3,8 @@ import {
   EffectComposer, RenderPass, EffectPass, BloomEffect, SMAAEffect, SMAAPreset,
   ToneMappingEffect, ToneMappingMode, KernelSize,
 } from 'postprocessing';
+// @ts-expect-error — n8ao ships no type declarations
+import { N8AOPostPass } from 'n8ao';
 import { TIERS, type Tier } from '../core/gfx-tiers';
 
 // pmndrs postprocessing stack. AgX tone mapping moves into the post chain (renderer set to
@@ -14,6 +16,18 @@ export function createPost(
   const cfg = TIERS[tier];
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
+
+  // GTAO (contact ambient occlusion) grounds the city — medium+ tiers. Runs after the scene
+  // render, before tone mapping. n8ao's pass auto-resizes with composer.setSize.
+  if (cfg.gtao) {
+    const ao = new N8AOPostPass(scene, camera, window.innerWidth, window.innerHeight);
+    ao.configuration.aoRadius = 6;
+    ao.configuration.distanceFalloff = 1.5;
+    ao.configuration.intensity = tier === 'high' ? 3.0 : 2.2;
+    ao.configuration.aoSamples = tier === 'high' ? 16 : 8;
+    ao.configuration.denoiseSamples = 4;
+    composer.addPass(ao);
+  }
 
   const effects = [];
   effects.push(new SMAAEffect({ preset: tier === 'low' ? SMAAPreset.LOW : SMAAPreset.HIGH }));
