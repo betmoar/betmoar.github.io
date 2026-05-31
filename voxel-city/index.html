@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VOXEL CITY — Infinite 8-bit Hustle [v47]</title>
+<title>VOXEL CITY — Infinite 8-bit Hustle</title>
 <style>
   :root{ --accent:#ff4d6d; --accent2:#4dd2ff; --gold:#ffd23f; --green:#5dff9d; }
   *{margin:0;padding:0;box-sizing:border-box;image-rendering:pixelated}
@@ -57,7 +57,7 @@
 <canvas id="c"></canvas>
 <div id="cross"></div>
 <div id="hud">
-  <div id="title" class="panel">◢ VOXEL CITY <span style="opacity:.6;font-size:.8em">v47</span></div>
+  <div id="title" class="panel">◢ VOXEL CITY <span id="ver" style="opacity:.6;font-size:.8em"></span></div>
   <div id="cash" class="panel">CASH<span class="n">$0</span></div>
   <div id="rep" class="panel">RANK<span class="n" id="repv">Rookie · Lv1</span></div>
   <canvas id="minimap" width="150" height="150"></canvas>
@@ -97,7 +97,10 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-const BUILD = 'v46';   // bump on each change; shown in title + HUD. Verify this matches.
+const BUILD = 'v47';   // SINGLE SOURCE OF TRUTH for the version. Bump here only — the
+                       // page <title> and HUD brand are populated from this at load.
+document.title = 'VOXEL CITY — Infinite 8-bit Hustle [' + BUILD + ']';
+{ const verEl = document.getElementById('ver'); if (verEl) verEl.textContent = BUILD; }
 console.log('%cVOXEL CITY '+BUILD+' — crosswalk stripe clipping active', 'color:#7CFC9A;font-weight:bold');
 
 // ============================================================================

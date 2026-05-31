@@ -70,9 +70,11 @@ just its centre — past bugs slipped through because the check shared the code�
 
 ## Verify you have the right build
 
-The version shows in three places: the page `<title>`, the HUD brand panel (top-left), and a
-console log on load. There’s a `const BUILD = 'vNN'` near the top of the script — bump it on
-each change so the running build is unambiguous.
+The version has **one source of truth**: `const BUILD = 'vNN'` near the top of the module
+script. Bump it there only — the page `<title>`, the HUD brand panel (top-left, `#ver`), and
+the console log on load are all populated from `BUILD` at runtime. Now that this is a real
+repo (not a drag-and-drop single file), there's no reason to keep version literals in sync by
+hand.
 
 ## Known follow-ups / not done
 
