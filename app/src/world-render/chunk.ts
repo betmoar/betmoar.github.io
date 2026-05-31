@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import { CHUNK } from '../world/world';
+import { CHUNK, SEA_LEVEL } from '../world/world';
 import { buildTerrainGeo } from '../render/mesh/terrain';
 import { buildRoadGeo } from '../render/mesh/roads';
 import { buildBuildingsGeo } from '../render/mesh/buildings';
+import { buildWaterGeo } from '../render/mesh/water';
 import type { Z1Kit } from '../assets/loaders';
 
 interface LoadedChunk { group: THREE.Group; geos: THREE.BufferGeometry[]; }
@@ -11,6 +12,7 @@ export interface ChunkMaterials {
   terrain: THREE.Material;
   road: THREE.Material;
   building: THREE.Material;
+  water: THREE.Material;
 }
 
 // Streams per-chunk meshes (terrain + roads + buildings) in a square ring around a focus point,
@@ -59,6 +61,9 @@ export class ChunkManager {
 
     const bg = buildBuildingsGeo(cx, cz, this.kit);
     if (bg) { geos.push(bg); const m = new THREE.Mesh(bg, this.mats.building); m.castShadow = true; m.receiveShadow = true; group.add(m); }
+
+    const wg = buildWaterGeo(cx, cz);
+    if (wg) { geos.push(wg); const m = new THREE.Mesh(wg, this.mats.water); m.position.set(cx * CHUNK, SEA_LEVEL + 0.05, cz * CHUNK); group.add(m); }
 
     this.scene.add(group);
     this.loaded.set(key, { group, geos });
