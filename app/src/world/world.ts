@@ -103,49 +103,77 @@ export function terrainHeight(wx: number, wz: number): number {
   return raw * (1 - k) + level * k;
 }
 
-// ---------- road grid (clean fully-connected Manhattan grid) ----------
-// Every grid line carries a street in BOTH axes wherever the city supports it, so roads always
-// connect into real blocks (no sparse cross-streets, no stub-trimming fragments). A line is
-// "supported" at a point if the neighbourhood is urban enough and above water. Highways are the
-// wider lines on the HWY_EVERY lattice.
-export function nearestLine(v: number): number { return Math.round(v / GRID_SP) * GRID_SP; }
-export function isHighwayLine(c: number): boolean { return (((Math.round(c / GRID_SP) % HWY_EVERY) + HWY_EVERY) % HWY_EVERY) === 0; }
-export function roadHalfWidth(c: number): number { return isHighwayLine(c) ? HWY_W : ROAD_W; }
-// Kept for API compatibility: in the connected grid every grid line is a cross-street.
-export function crossStreetLine(_c: number): boolean { return true; }
-
-// Is there urban support for a road centred on grid line `line` at the given perpendicular coord?
-// Sampled on BOTH sides of the line so a road only exists where it borders developed land.
+// ---------- road grid (variable-size blocks; roads only between blocks) ----------
+// Building lots sit on the fine GRID_SP lattice. Roads run on a COARSER, deterministically VARIABLE
+// lattice so each city block holds 2–4 lots (multiple buildings) rather than a crossroad at every
+// lot. Per axis, grid lines are grouped into bands of BAND lines; each band contributes exactly one
+// road line at a hashed offset, giving block widths of 2–4 lots that differ between X and Z (so
+// blocks are rectangular and varied, not a uniform square mesh).
+const BAND = 3;           // lines per band → one road line each → blocks span 2..4 lots
+const SALT_RX = 1001, SALT_RZ = 2002, SALT_HX = 3003, SALT_HZ = 4004;
 const ROAD_CITY_MIN = 0.18;
-function supportV(lineX: number, wz: number): boolean { // avenue (constant x)
+
+export function nearestLine(v: number): number { return Math.round(v / GRID_SP) * GRID_SP; }
+
+// The single road-line index contributed by band `b` on each axis (offset 0 or 1 within the band).
+function roadIdxX(b: number): number { return b * BAND + (hash(b, SALT_RX) < 0.5 ? 0 : 1); }
+function roadIdxZ(b: number): number { return b * BAND + (hash(b, SALT_RZ) < 0.5 ? 0 : 1); }
+// Is the grid line at world coord `c` a road line on this axis?
+export function isRoadLineX(c: number): boolean { const i = Math.round(c / GRID_SP); return i === roadIdxX(Math.floor(i / BAND)); }
+export function isRoadLineZ(c: number): boolean { const i = Math.round(c / GRID_SP); return i === roadIdxZ(Math.floor(i / BAND)); }
+// Nearest road line (world coord) on each axis — for snapping traffic/peds to actual roads.
+export function nearestRoadLineX(x: number): number {
+  const bb = Math.floor(x / GRID_SP / BAND); let best = 0, bd = Infinity;
+  for (let b = bb - 1; b <= bb + 1; b++) { const line = roadIdxX(b) * GRID_SP, d = Math.abs(line - x); if (d < bd) { bd = d; best = line; } }
+  return best;
+}
+export function nearestRoadLineZ(z: number): number {
+  const bb = Math.floor(z / GRID_SP / BAND); let best = 0, bd = Infinity;
+  for (let b = bb - 1; b <= bb + 1; b++) { const line = roadIdxZ(b) * GRID_SP, d = Math.abs(line - z); if (d < bd) { bd = d; best = line; } }
+  return best;
+}
+// Highways: a sparser subset of road lines (wider). Signals sit at highway×highway junctions.
+export function isHighwayLine(c: number): boolean {
+  const i = Math.round(c / GRID_SP); const b = Math.floor(i / BAND);
+  // only on a road line, and only ~every 4th band
+  return (isRoadLineX(c) || isRoadLineZ(c)) && hash(b, SALT_HX) < 0.22;
+}
+function isHwyX(c: number): boolean { const b = Math.floor(Math.round(c / GRID_SP) / BAND); return hash(b, SALT_HX) < 0.22; }
+function isHwyZ(c: number): boolean { const b = Math.floor(Math.round(c / GRID_SP) / BAND); return hash(b, SALT_HZ) < 0.22; }
+export function roadHalfWidth(c: number): number { return (isHwyX(c) || isHwyZ(c)) ? HWY_W : ROAD_W; }
+// Kept for API compatibility (used to gate cross-streets); now any road line on the Z axis.
+export function crossStreetLine(c: number): boolean { return isRoadLineZ(c); }
+
+function supportV(lineX: number, wz: number): boolean {
   return Math.max(cityness(lineX - GRID_SP / 2, wz), cityness(lineX + GRID_SP / 2, wz)) >= ROAD_CITY_MIN;
 }
-function supportH(wx: number, lineZ: number): boolean { // cross-street (constant z)
+function supportH(wx: number, lineZ: number): boolean {
   return Math.max(cityness(wx, lineZ - GRID_SP / 2), cityness(wx, lineZ + GRID_SP / 2)) >= ROAD_CITY_MIN;
 }
 
 export function onRoadTile(wx: number, wz: number): boolean {
   const lx = nearestLine(wx), lz = nearestLine(wz);
-  const onV = Math.abs(wx - lx) <= roadHalfWidth(lx) + 2;
-  const onH = Math.abs(wz - lz) <= roadHalfWidth(lz) + 2;
+  const onV = isRoadLineX(lx) && Math.abs(wx - lx) <= roadHalfWidth(lx) + 2;
+  const onH = isRoadLineZ(lz) && Math.abs(wz - lz) <= roadHalfWidth(lz) + 2;
   return onV || onH;
 }
 export function groundOrBridge(wx: number, wz: number): number { return Math.max(terrainHeight(wx, wz), SEA_LEVEL); }
 
-// THE single road predicate: drivable surface at (wx,wz). On a grid line, supported by city, dry.
+// THE single road predicate: drivable surface at (wx,wz). On a road line, supported by city, dry.
 export function roadHere(wx: number, wz: number): boolean {
   if (terrainHeight(wx, wz) < SEA_LEVEL + ROAD_WATER_MARGIN) return false;
   const lx = nearestLine(wx), lz = nearestLine(wz);
-  if (Math.abs(wx - lx) <= roadHalfWidth(lx) && supportV(lx, wz)) return true;  // on an avenue
-  if (Math.abs(wz - lz) <= roadHalfWidth(lz) && supportH(wx, lz)) return true;  // on a cross-street
+  if (isRoadLineX(lx) && Math.abs(wx - lx) <= roadHalfWidth(lx) && supportV(lx, wz)) return true; // avenue
+  if (isRoadLineZ(lz) && Math.abs(wz - lz) <= roadHalfWidth(lz) && supportH(wx, lz)) return true; // cross-street
   return false;
 }
-// Validated road model for a chunk.
+// Validated road model for a chunk — iterate only the ROAD lines, not every grid line.
 export function buildRoadNetwork(cx: number, cz: number): RoadNetwork {
   const ox = cx * CHUNK, oz = cz * CHUNK, STEP = 2;
   const segments: RoadSegment[] = [], intersections: Intersection[] = [];
   for (let lineX = Math.round((ox - CHUNK / 2) / GRID_SP) * GRID_SP - GRID_SP; lineX <= ox + CHUNK / 2 + GRID_SP; lineX += GRID_SP) {
     if (lineX < ox - CHUNK / 2 - 0.01 || lineX >= ox + CHUNK / 2 - 0.01) continue;
+    if (!isRoadLineX(lineX)) continue;
     const HW = roadHalfWidth(lineX), type: 'hwy' | 'st' = HW > ROAD_W ? 'hwy' : 'st';
     for (let z = oz - CHUNK / 2; z < oz + CHUNK / 2; z += STEP) {
       const zc = z + STEP / 2;
@@ -155,6 +183,7 @@ export function buildRoadNetwork(cx: number, cz: number): RoadNetwork {
   }
   for (let lineZ = Math.round((oz - CHUNK / 2) / GRID_SP) * GRID_SP - GRID_SP; lineZ <= oz + CHUNK / 2 + GRID_SP; lineZ += GRID_SP) {
     if (lineZ < oz - CHUNK / 2 - 0.01 || lineZ >= oz + CHUNK / 2 - 0.01) continue;
+    if (!isRoadLineZ(lineZ)) continue;
     const HW = roadHalfWidth(lineZ), type: 'hwy' | 'st' = HW > ROAD_W ? 'hwy' : 'st';
     for (let x = ox - CHUNK / 2; x < ox + CHUNK / 2; x += STEP) {
       const xc = x + STEP / 2;
@@ -165,12 +194,14 @@ export function buildRoadNetwork(cx: number, cz: number): RoadNetwork {
   const gx0 = Math.floor((ox - CHUNK / 2) / GRID_SP) * GRID_SP, gx1 = Math.ceil((ox + CHUNK / 2) / GRID_SP) * GRID_SP;
   const gz0 = Math.floor((oz - CHUNK / 2) / GRID_SP) * GRID_SP, gz1 = Math.ceil((oz + CHUNK / 2) / GRID_SP) * GRID_SP;
   for (let lineX = gx0; lineX <= gx1; lineX += GRID_SP) {
+    if (!isRoadLineX(lineX)) continue;
     for (let lineZ = gz0; lineZ <= gz1; lineZ += GRID_SP) {
+      if (!isRoadLineZ(lineZ)) continue;
       if (!roadHere(lineX, lineZ)) continue;
       const vOK = roadHere(lineX, lineZ - GRID_SP / 2) || roadHere(lineX, lineZ + GRID_SP / 2);
       const hOK = roadHere(lineX - GRID_SP / 2, lineZ) || roadHere(lineX + GRID_SP / 2, lineZ);
       if (!(vOK && hOK)) continue;
-      const light = isHighwayLine(lineX) && isHighwayLine(lineZ);
+      const light = isHwyX(lineX) && isHwyZ(lineZ);
       intersections.push({ x: lineX, z: lineZ, hwx: roadHalfWidth(lineX), hwz: roadHalfWidth(lineZ), light });
     }
   }

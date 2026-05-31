@@ -1,11 +1,11 @@
 import { ecs, peds, type Ped } from '../ecs/world-ecs';
-import { SEA_LEVEL, nearestLine, roadHalfWidth, roadHere, terrainHeight, buildingFootprintAt } from '../world/world';
+import { SEA_LEVEL, nearestRoadLineX, roadHalfWidth, roadHere, terrainHeight, buildingFootprintAt } from '../world/world';
 
 // Pedestrian system — peds walk the sidewalk strip just off the avenue edge (never on the asphalt,
 // never in water or inside a building footprint), reversing at obstacles, with a walk-bob phase.
 // Constant local population that respawns near the streaming focus. Authored character meshes
 // (skinned glTF + AnimationMixer) replace the box humanoids at M4-content time.
-const TARGET = 150, RANGE = 110, MAXD = 170, PALETTE = 5;
+const TARGET = 80, RANGE = 130, MAXD = 190, PALETTE = 5;
 
 function placeable(x: number, z: number): boolean {
   return terrainHeight(x, z) >= SEA_LEVEL + 0.3 && !roadHere(x, z) && !buildingFootprintAt(x, z);
@@ -13,7 +13,7 @@ function placeable(x: number, z: number): boolean {
 
 function trySpawn(fx: number, fz: number): Ped | null {
   for (let i = 0; i < 16; i++) {
-    const lineX = nearestLine(fx + (Math.random() - 0.5) * RANGE * 2);
+    const lineX = nearestRoadLineX(fx + (Math.random() - 0.5) * RANGE * 2);
     const side = Math.random() < 0.5 ? 1 : -1;
     const x = lineX + side * (roadHalfWidth(lineX) + 1.4); // sidewalk, just off the road edge
     const z = fz + (Math.random() - 0.5) * RANGE * 2;
