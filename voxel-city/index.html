@@ -97,7 +97,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-const BUILD = 'v47';   // SINGLE SOURCE OF TRUTH for the version. Bump here only — the
+const BUILD = 'v48';   // SINGLE SOURCE OF TRUTH for the version. Bump here only — the
                        // page <title> and HUD brand are populated from this at load.
 document.title = 'VOXEL CITY — Infinite 8-bit Hustle [' + BUILD + ']';
 { const verEl = document.getElementById('ver'); if (verEl) verEl.textContent = BUILD; }
@@ -450,6 +450,33 @@ function buildRoadNetwork(cx,cz){
     }
   }
   return {segments, intersections};
+}
+
+// ---------- traffic signals (pure timing logic) — keep in sync with world.mjs ----------
+// Functional signals at highway×highway junctions. Pure + deterministic from (ix,iz,t) so the
+// renderer (lamp colour) and the simulation (which cars must stop) always agree, and so the
+// harness can verify the state machine without a GPU.
+const TL_GREEN = 7, TL_YELLOW = 2, TL_HALF = TL_GREEN + TL_YELLOW, TL_CYCLE = TL_HALF * 2;
+// Per-junction phase offset so the whole city doesn't switch in lockstep.
+function tlOffset(ix, iz) {
+  const k = Math.round(ix / GRID_SP) * 7 + Math.round(iz / GRID_SP) * 13;
+  return ((k % TL_CYCLE) + TL_CYCLE) % TL_CYCLE;
+}
+// Signal state for one travel axis at junction (ix,iz) at time t: 0=green, 1=yellow, 2=red.
+// axis 0 (cars moving along X) and axis 1 (cars moving along Z) are a half-cycle apart, so the
+// two directions are never green at the same time.
+function tlState(axis, ix, iz, t) {
+  const phase = (((t + tlOffset(ix, iz)) % TL_CYCLE) + TL_CYCLE) % TL_CYCLE;
+  const local = axis === 0 ? phase : (phase + TL_HALF) % TL_CYCLE;
+  if (local < TL_GREEN) return 0;
+  if (local < TL_HALF) return 1;
+  return 2;
+}
+// Nearest highway grid line strictly ahead of v in travel direction dir (highway lines sit at
+// multiples of GRID_SP*HWY_EVERY). Used to find the junction a car is approaching.
+function nextHighwayLine(v, dir) {
+  const HSP = GRID_SP * HWY_EVERY;
+  return dir > 0 ? Math.ceil((v + 0.001) / HSP) * HSP : Math.floor((v - 0.001) / HSP) * HSP;
 }
 // High-res road surface mesh for a chunk: RENDERS the validated network model.
 // No geometric decisions here — every element comes from buildRoadNetwork.
@@ -831,13 +858,19 @@ const tlightPoleInst=new THREE.InstancedMesh(new THREE.CylinderGeometry(0.15,0.1
   new THREE.MeshLambertMaterial({color:0x1c1c20}),MAX_TLIGHT); tlightPoleInst.frustumCulled=false; scene.add(tlightPoleInst);
 const tlightHeadInst=new THREE.InstancedMesh(new THREE.BoxGeometry(0.5,1.4,0.5),
   new THREE.MeshLambertMaterial({color:0x111114}),MAX_TLIGHT); tlightHeadInst.frustumCulled=false; scene.add(tlightHeadInst);
+// Two lamp faces per junction (one per travel axis), coloured per-instance each frame, so the
+// lamp pool is twice the junction pool. Basic (unlit) material so the lamp always reads as "lit"
+// and its instance colour shows directly; bright colours still feed bloom.
 const tlightLampInst=new THREE.InstancedMesh(new THREE.BoxGeometry(0.38,0.38,0.3),
-  new THREE.MeshLambertMaterial({color:0xff3322,emissive:0xff2200,emissiveIntensity:2.2}),MAX_TLIGHT);
+  new THREE.MeshBasicMaterial({color:0xffffff}),MAX_TLIGHT*2);
 tlightLampInst.frustumCulled=false; scene.add(tlightLampInst);
+// signal lamp colours and the flat per-frame list (instance order matches rebuildProps)
+const TL_COL=[new THREE.Color(0x2bff44), new THREE.Color(0xffcc22), new THREE.Color(0xff2200)]; // green/yellow/red
+const tlightList=[];
 layerMats.roads.push(tlightPoleInst.material, tlightHeadInst.material, tlightLampInst.material);
 // Rebuild all static prop instances from currently-loaded chunks.
 function rebuildProps(){
-  let li=0,ti=0,gi=0;
+  let li=0,ti=0,gi=0,lpi=0;
   for(const c of chunks.values()){
     for(const L of (c.lamps||[])){ if(li>=MAX_LAMP)break;
       _p.set(L.x,L.y+2.5,L.z); _m.compose(_p,_q0,_s); lampPoleInst.setMatrixAt(li,_m);
@@ -848,11 +881,16 @@ function rebuildProps(){
       foliageInst.setColorAt(ti,foliageColors[T.c]); ti++; }
     for(const G of (c.tlights||[])){ if(gi>=MAX_TLIGHT)break;
       _p.set(G.x,G.y+3,G.z); _m.compose(_p,_q0,_s); tlightPoleInst.setMatrixAt(gi,_m);
-      _p.set(G.x,G.y+5.4,G.z); _m.compose(_p,_q0,_s); tlightHeadInst.setMatrixAt(gi,_m);
-      _p.set(G.x,G.y+5.8,G.z+0.2); _m.compose(_p,_q0,_s); tlightLampInst.setMatrixAt(gi,_m); gi++; }
+      _p.set(G.x,G.y+5.4,G.z); _m.compose(_p,_q0,_s); tlightHeadInst.setMatrixAt(gi,_m); gi++;
+      // two lamp faces: axis 0 (E-W, faces +Z) above, axis 1 (N-S, faces +X) below
+      _p.set(G.x,G.y+5.95,G.z+0.27); _m.compose(_p,_q0,_s); tlightLampInst.setMatrixAt(lpi,_m);
+      tlightList[lpi]={axis:0,ix:G.ix,iz:G.iz}; lpi++;
+      _p.set(G.x+0.27,G.y+5.55,G.z); _m.compose(_p,_q0,_s); tlightLampInst.setMatrixAt(lpi,_m);
+      tlightList[lpi]={axis:1,ix:G.ix,iz:G.iz}; lpi++; }
   }
+  tlightList.length=lpi;
   lampPoleInst.count=li; lampHeadInst.count=li; trunkInst.count=ti; foliageInst.count=ti;
-  tlightPoleInst.count=gi; tlightHeadInst.count=gi; tlightLampInst.count=gi;
+  tlightPoleInst.count=gi; tlightHeadInst.count=gi; tlightLampInst.count=lpi;
   tlightPoleInst.instanceMatrix.needsUpdate=true; tlightHeadInst.instanceMatrix.needsUpdate=true; tlightLampInst.instanceMatrix.needsUpdate=true;
   lampPoleInst.instanceMatrix.needsUpdate=true; lampHeadInst.instanceMatrix.needsUpdate=true;
   trunkInst.instanceMatrix.needsUpdate=true; foliageInst.instanceMatrix.needsUpdate=true;
@@ -963,7 +1001,7 @@ function buildChunk(cx,cz){
     for(const it of net.intersections){ if(!it.light) continue;
       // place the signal on a corner of the junction, on the ground
       const sx=it.x+it.hwx+1.0, sz=it.z+it.hwz+1.0;
-      tlights.push({x:sx, z:sz, y:Math.max(terrainHeight(sx,sz),SEA_LEVEL)}); } }
+      tlights.push({x:sx, z:sz, y:Math.max(terrainHeight(sx,sz),SEA_LEVEL), ix:it.x, iz:it.z}); } }
   chunks.set(cx+','+cz,{tmesh,roadMesh,water,bmesh,peds,traffic,job,lamps,trees,tlights});
   if(DEBUG) applyRenderState();   // new chunk inherits current layer/wireframe/normals state
 }
@@ -1555,6 +1593,10 @@ function tickInner(){
     return; // skip all world simulation while frozen
   } else freeCam.inited=false;
   tNow+=dt;
+  // animate traffic-signal lamps: recolour each lamp face from its axis' current state
+  for(let i=0;i<tlightList.length;i++){ const L=tlightList[i];
+    tlightLampInst.setColorAt(i, TL_COL[tlState(L.axis,L.ix,L.iz,tNow)]); }
+  if(tlightList.length && tlightLampInst.instanceColor) tlightLampInst.instanceColor.needsUpdate=true;
   updateDayNight(dt);
   updateParticles(dt);
   fpsN++;fpsT+=dt; if(fpsT>=0.5){fps=Math.round(fpsN/fpsT);fpsN=0;fpsT=0;}
@@ -1661,7 +1703,22 @@ function tickInner(){
     }
     for(const t of c.traffic){
       const oxt=t.x, ozt=t.z;
-      if(t.axis===0) t.x+=t.dir*t.spd*dt; else t.z+=t.dir*t.spd*dt;
+      // traffic-signal gating: hold at the stop line on yellow/red before a lit junction
+      let stop=false;
+      const cross=nearestLine(t.axis===0 ? t.z : t.x);   // the road line the car drives along
+      if(isHighwayLine(cross)){
+        const moving=t.axis===0 ? t.x : t.z;
+        const ahead=nextHighwayLine(moving,t.dir);        // junction centre on the moving axis
+        const ix=t.axis===0?ahead:cross, iz=t.axis===0?cross:ahead;
+        if(tlState(t.axis,ix,iz,tNow)!==0){               // not green
+          const stopLine=ahead - t.dir*(HWY_W+1.6);
+          const dist=(stopLine-moving)*t.dir;             // >0: stop line still ahead
+          if(dist>=-0.5 && dist<8){                       // within the approach zone (let cars in the box clear)
+            if(t.axis===0) t.x=stopLine; else t.z=stopLine; stop=true;
+          }
+        }
+      }
+      if(!stop){ if(t.axis===0) t.x+=t.dir*t.spd*dt; else t.z+=t.dir*t.spd*dt; }
       if(t.axis===0) t.z=nearestLine(t.z)+t.dir*LANE; else t.x=nearestLine(t.x)+t.dir*LANE;
       // water ahead: revert and reverse
       if(terrainHeight(t.x,t.z)<SEA_LEVEL+0.3){ t.x=oxt; t.z=ozt; t.dir=-t.dir; t.turnedAt=null; }

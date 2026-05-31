@@ -183,6 +183,24 @@ function inv_finiteHeights(chunks) {
 }
 
 const INVARIANTS = {
+  // Traffic signals never let both travel axes go at once (no green-green cross conflict).
+  inv_signalsNeverBothGreen() {
+    for (const [ix, iz] of [[0, 0], [192, 192], [192, -384]])
+      for (let t = 0; t < W.TL_CYCLE; t += 0.25)
+        if (W.tlState(0, ix, iz, t) === 0 && W.tlState(1, ix, iz, t) === 0)
+          return { pass: false, detail: `both axes green @(${ix},${iz}) t=${t.toFixed(2)}` };
+    return { pass: true };
+  },
+  // Each axis passes through all three states (green, yellow, red) over a full cycle.
+  inv_signalsCycle() {
+    for (const axis of [0, 1]) {
+      const seen = new Set();
+      for (let t = 0; t < W.TL_CYCLE; t += 0.25) seen.add(W.tlState(axis, 0, 0, t));
+      if (!(seen.has(0) && seen.has(1) && seen.has(2)))
+        return { pass: false, detail: `axis ${axis} states seen: ${[...seen].join(',')}` };
+    }
+    return { pass: true };
+  },
   'no road over water': inv_noRoadOverWater,
   'intersections are real crossings': inv_intersectionsAreRealCrossings,
   'crosswalk stripes never over water': inv_crosswalkStripesOverRoad,
@@ -223,7 +241,7 @@ function checkInSync() {
     for (; i < src.length && depth > 0; i++) { if (src[i] === '{') depth++; else if (src[i] === '}') depth--; }
     return norm(src.slice(m.index + m[0].length, i - 1));
   }
-  const fns = ['terrainRaw', 'citynessRaw', 'urbanCore', 'zone', 'blockLevel', 'terrainHeight', 'roadHere', 'buildRoadNetwork', 'isPark', 'buildingAt', 'buildingFootprintAt'];
+  const fns = ['terrainRaw', 'citynessRaw', 'urbanCore', 'zone', 'blockLevel', 'terrainHeight', 'roadHere', 'buildRoadNetwork', 'tlOffset', 'tlState', 'isPark', 'buildingAt', 'buildingFootprintAt'];
   for (const fn of fns) {
     const a = body(html, fn), b = body(wsrc, fn);
     if (a == null) { report(`sync ${fn}`, false, 'not found in game file'); continue; }

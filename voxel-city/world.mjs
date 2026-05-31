@@ -151,6 +151,27 @@ export function buildRoadNetwork(cx, cz) {
   return { segments, intersections };
 }
 
+// ---------- traffic signals (pure timing logic) ----------
+// Functional signals at highway×highway junctions. Pure + deterministic from (ix,iz,t) so the
+// renderer (lamp colour) and the simulation (which cars must stop) always agree, and so the
+// harness can verify the state machine without a GPU.
+export const TL_GREEN = 7, TL_YELLOW = 2, TL_HALF = TL_GREEN + TL_YELLOW, TL_CYCLE = TL_HALF * 2;
+// Per-junction phase offset so the whole city doesn't switch in lockstep.
+export function tlOffset(ix, iz) {
+  const k = Math.round(ix / GRID_SP) * 7 + Math.round(iz / GRID_SP) * 13;
+  return ((k % TL_CYCLE) + TL_CYCLE) % TL_CYCLE;
+}
+// Signal state for one travel axis at junction (ix,iz) at time t: 0=green, 1=yellow, 2=red.
+// axis 0 (cars moving along X) and axis 1 (cars moving along Z) are a half-cycle apart, so the
+// two directions are never green at the same time.
+export function tlState(axis, ix, iz, t) {
+  const phase = (((t + tlOffset(ix, iz)) % TL_CYCLE) + TL_CYCLE) % TL_CYCLE;
+  const local = axis === 0 ? phase : (phase + TL_HALF) % TL_CYCLE;
+  if (local < TL_GREEN) return 0;
+  if (local < TL_HALF) return 1;
+  return 2;
+}
+
 // ---------- buildings ----------
 export function isPark(blockX, blockZ) {
   const pr = rng(Math.round(blockX), Math.round(blockZ), 23);
