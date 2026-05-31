@@ -80,6 +80,10 @@ function findStart(): { x: number; z: number } {
 }
 const start = findStart();
 const controls = new CameraController(camera, canvas, start);
+const character = physics.createCharacter(start.x, terrainHeight(start.x, start.z) + 3, start.z);
+controls.attachWalker(physics, character);
+if (params.get('mode') === 'walk') controls.setMode('walk');
+if (params.get('mode') === 'fly') controls.setMode('fly');
 
 addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -119,7 +123,10 @@ renderer.setAnimationLoop(() => {
   frames++; acc += dt;
   if (acc >= 0.5) { fps = Math.round(frames / acc); frames = 0; acc = 0; }
   const tod = dayNight.timeOfDay.toFixed(2);
-  hud.textContent = `VOXEL CITY 2 — engine+physics  [${controls.mode === 'fly' ? 'FLY: WASD+mouse, Esc to release' : 'click to fly'}]\ntier ${tier} · ${fps} fps · chunks ${chunks.count} (bldg ${chunks.buildingCount}) · cars ${carInstances.count} · peds ${pedInstances.count} · crates ${crateInstances.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''}`;
+  const modeHint = controls.mode === 'auto' ? 'click to explore'
+    : controls.mode === 'fly' ? 'FLY: WASD+mouse · G=walk · Esc'
+    : 'WALK: WASD+mouse · Space=jump · G=fly · Esc';
+  hud.textContent = `VOXEL CITY 2 — engine+physics  [${modeHint}]\ntier ${tier} · ${fps} fps · chunks ${chunks.count} (bldg ${chunks.buildingCount}) · cars ${carInstances.count} · peds ${pedInstances.count} · crates ${crateInstances.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''}`;
 
   post.composer.render();
 });

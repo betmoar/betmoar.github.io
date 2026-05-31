@@ -7,6 +7,12 @@ import { buildTerrainGeo } from '../render/mesh/terrain';
 // cuboids straight from buildingAt's spec (preserving the collision==geometry principle). Colliders
 // stream with the inner chunk ring. Dynamic crates demonstrate the world responding to gravity;
 // the player/vehicle character controller plugs into this world at the player-camera step.
+export interface Character {
+  body: RAPIER.RigidBody;
+  collider: RAPIER.Collider;
+  controller: RAPIER.KinematicCharacterController;
+}
+
 export class PhysicsWorld {
   world!: RAPIER.World;
   crates: RAPIER.RigidBody[] = [];
@@ -72,6 +78,27 @@ export class PhysicsWorld {
       const old = this.crates.shift()!;
       this.world.removeRigidBody(old);
     }
+  }
+
+  // First-person capsule with a kinematic character controller (autostep small ledges, snap to
+  // ground). ~1.8 m tall. Walk movement is collision-corrected against the streamed colliders.
+  createCharacter(x: number, y: number, z: number): Character {
+    const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(x, y, z));
+    const collider = this.world.createCollider(RAPIER.ColliderDesc.capsule(0.5, 0.4), body);
+    const controller = this.world.createCharacterController(0.02);
+    controller.enableAutostep(0.5, 0.2, true);
+    controller.enableSnapToGround(0.4);
+    controller.setApplyImpulsesToDynamicBodies(true);
+    return { body, collider, controller };
+  }
+
+  // Collision-corrected move: returns whether the character is grounded after the move.
+  moveCharacter(ch: Character, disp: { x: number; y: number; z: number }): boolean {
+    ch.controller.computeColliderMovement(ch.collider, disp);
+    const m = ch.controller.computedMovement();
+    const t = ch.body.translation();
+    ch.body.setNextKinematicTranslation({ x: t.x + m.x, y: t.y + m.y, z: t.z + m.z });
+    return ch.controller.computedGrounded();
   }
 
   // fixed-timestep stepping with a small catch-up cap
