@@ -20,7 +20,13 @@ a real photo as the background + reflection environment instead of the procedura
 Use `.jpg` or `.webp` (LDR). For true `.hdr` HDRIs you'd need to vendor `RGBELoader` (and optionally
 `GroundedSkybox`) via `vendor/update-three.mjs` — deliberately not done yet to stay lightweight.
 
+## Lining the lighting up with the photo
+When a skybox is active the day/night cycle is locked so the procedural sun matches the baked photo:
+- `GFX.skyboxLockTime` (default `true`) — freeze the cycle (no drifting to night under a day photo).
+- `GFX.skyboxTimeOfDay` (default `0.5` = noon) — the frozen time; pick to match the panorama's
+  brightness (sunrise `.25`, sunset `.75`).
+- `GFX.skyboxSunAz` (default `0`, degrees) — rotate the sun horizontally so cast shadows + the
+  scatter-fog warm glow point the same way as the sun visible in the photo. Tune per panorama.
+
 ## Tuning notes
-- The photo's baked sun/exposure won't match the day-night cycle; when a skybox is active consider
-  biasing `timeOfDay` toward the panorama's lighting.
 - Skybox + bloom can wash out — lower `GFX.skyboxExposure` (and/or `GFX.bloomStrength`) on desktop.

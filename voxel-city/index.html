@@ -199,6 +199,10 @@ const GFX = {
   skybox: false,       // use an equirect photo as background + reflection env (needs vendor/hdri file)
   skyboxFile: 'city_downtown.jpg', // which panorama under vendor/hdri/ to load
   skyboxExposure: 0.95,// ACES tone-mapping exposure when a skybox is active (tame bloom blowout)
+  // when a skybox is active, line the procedural sun up with the photo's baked lighting:
+  skyboxLockTime: true,  // freeze the day/night cycle so it can't drift to night under a daytime photo
+  skyboxTimeOfDay: 0.5,  // 0=midnight .25=sunrise .5=noon .75=sunset — match the panorama's brightness
+  skyboxSunAz: 0,        // extra horizontal sun rotation (degrees) to aim shadows at the photo's sun
 };
 const VIEW=GFX.viewDist;
 const scene=new THREE.Scene();
@@ -271,13 +275,23 @@ const _tmpA=new THREE.Color(), _tmpB=new THREE.Color();
 // reusable vectors for sun-scattering fog (avoid per-frame allocation)
 const _sunDir=new THREE.Vector3(), _camFwd=new THREE.Vector3();
 function updateDayNight(dt){
-  timeOfDay=(timeOfDay+dt/DAY_LENGTH)%1;
+  // With a skybox installed, the photo's baked sun/exposure is fixed — so freeze the cycle at a
+  // time that matches the panorama (default noon) instead of letting it drift to night.
+  if(skyboxActive && GFX.skyboxLockTime) timeOfDay=GFX.skyboxTimeOfDay;
+  else timeOfDay=(timeOfDay+dt/DAY_LENGTH)%1;
   // sun elevation: peaks at noon (0.5), below horizon at night
   const ang=(timeOfDay-0.25)*Math.PI*2;       // 0 at sunrise
   const elev=Math.sin(ang);                    // -1..1
   // position the sun RELATIVE to the player so shadows render where the player is
   const fx = (typeof px==='function')?px():0, fz=(typeof pz==='function')?pz():0;
-  sun.position.set(fx+Math.cos(ang)*120, Math.max(20,elev*140), fz+60);
+  // horizontal sun vector; under a skybox, rotate it by skyboxSunAz so cast shadows line up
+  // with the sun visible in the photo. _sunHx/_sunHz are reused for the scatter-fog direction.
+  let _sunHx=Math.cos(ang)*120, _sunHz=60;
+  if(skyboxActive && GFX.skyboxSunAz){
+    const az=GFX.skyboxSunAz*Math.PI/180, ca=Math.cos(az), sa=Math.sin(az);
+    const nx=_sunHx*ca-_sunHz*sa; _sunHz=_sunHx*sa+_sunHz*ca; _sunHx=nx;
+  }
+  sun.position.set(fx+_sunHx, Math.max(20,elev*140), fz+_sunHz);
   if(sun.target){ sun.target.position.set(fx,0,fz); sun.target.updateMatrixWorld(); }
   const daylight=Math.max(0,elev);             // 0 at/under horizon, 1 at noon
   sun.intensity=0.15+daylight*1.0;
@@ -295,8 +309,8 @@ function updateDayNight(dt){
   // base fog = sky colour; when looking toward the sun near the horizon, push it warm; away, cooler.
   _tmpB.copy(_tmpA);
   if(GFX.scatterFog && elev>-0.15){
-    // sun world direction (same construction as sun.position above, but as a unit-ish dir)
-    _sunDir.set(Math.cos(ang), Math.max(0.05,elev), 0.5).normalize();
+    // sun world direction, reusing the (possibly skybox-rotated) horizontal vector from above
+    _sunDir.set(_sunHx, Math.max(0.05,elev)*120, _sunHz).normalize();
     camera.getWorldDirection(_camFwd);
     const toward=Math.max(0,_camFwd.dot(_sunDir));         // 1 looking at sun, 0 perpendicular/away
     const horizon=Math.max(0,1-Math.abs(elev)*1.5);        // strongest low on the horizon

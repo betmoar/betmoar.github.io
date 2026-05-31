@@ -79,6 +79,11 @@ All default-safe — the game looks identical until toggled, and missing assets 
   as `scene.background` + `scene.environment`. ACES tone-mapping turns on only while active.
   Off by default; if the file is missing it warns and keeps the procedural sky. See
   `vendor/hdri/README.md`. Water is `MeshStandardMaterial` so it reflects the environment.
+- `GFX.skyboxLockTime` / `GFX.skyboxTimeOfDay` / `GFX.skyboxSunAz`: while a skybox is active, lock
+  the day/night cycle to a fixed time (default noon) so the procedural sun/exposure matches the
+  baked daytime photo instead of drifting to night, and optionally rotate the sun horizontally
+  (`skyboxSunAz` degrees) so cast shadows + the scatter-fog warm spot line up with the sun in the
+  photo. All in `updateDayNight`.
 
 ## In-game debug tools (press `~` to toggle DEBUG)
 
