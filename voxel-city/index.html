@@ -1365,7 +1365,10 @@ function radioCarState(inCar){
 }
 
 const lock=document.getElementById('lock');
-lock.addEventListener('click',()=>renderer.domElement.requestPointerLock());
+// Pointer Lock API is absent on most mobile browsers (iOS Safari etc.) — feature-detect
+// so the tap doesn't throw, and just dismiss the overlay there (no mouse-look on touch).
+const hasPointerLock = typeof renderer.domElement.requestPointerLock === 'function';
+lock.addEventListener('click',()=>{ if(hasPointerLock) renderer.domElement.requestPointerLock(); else lock.style.display='none'; });
 document.addEventListener('pointerlockchange',()=>{lock.style.display=document.pointerLockElement===renderer.domElement?'none':'flex';});
 addEventListener('mousemove',e=>{if(document.pointerLockElement!==renderer.domElement||player.inCar)return;
   player.yaw-=e.movementX*0.0022; player.pitch=Math.max(-1.2,Math.min(1.2,player.pitch-e.movementY*0.0022));});
