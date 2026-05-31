@@ -79,6 +79,12 @@ All default-safe — the game looks identical until toggled, and missing assets 
   as `scene.background` + `scene.environment`. ACES tone-mapping turns on only while active.
   Off by default; if the file is missing it warns and keeps the procedural sky. See
   `vendor/hdri/README.md`. Water is `MeshStandardMaterial` so it reflects the environment.
+- `GFX.waterWaves` / `GFX.waterSegments` / `GFX.waveAmp` / `GFX.waveSpeed`: animated water surface.
+  A clean-room sum-of-sines heightfield is injected into `waterMat` via `onBeforeCompile` (vertex
+  displacement + analytic normals), so three's PBR lighting, env reflection and fog still apply —
+  wave normals make the skybox reflection shimmer. Waves are a function of WORLD position so chunks
+  stay seamless; `waterMat.userData.shader.uniforms.uTime` is advanced each frame in the tick.
+  `false` = flat water plane (old look). Reimplemented from scratch (OpenWorldJS as reference only).
 - `GFX.skyboxLockTime` / `GFX.skyboxTimeOfDay` / `GFX.skyboxSunAz`: while a skybox is active, lock
   the day/night cycle to a fixed time (default noon) so the procedural sun/exposure matches the
   baked daytime photo instead of drifting to night, and optionally rotate the sun horizontally

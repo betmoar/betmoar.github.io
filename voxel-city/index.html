@@ -203,6 +203,11 @@ const GFX = {
   skyboxLockTime: true,  // freeze the day/night cycle so it can't drift to night under a daytime photo
   skyboxTimeOfDay: 0.5,  // 0=midnight .25=sunrise .5=noon .75=sunset — match the panorama's brightness
   skyboxSunAz: 0,        // extra horizontal sun rotation (degrees) to aim shadows at the photo's sun
+  // animated water surface (clean-room sum-of-sines waves injected into the water material):
+  waterWaves: true,    // false = flat water plane (old look)
+  waterSegments: 16,   // plane subdivisions per chunk for the wave displacement (cost vs smoothness)
+  waveAmp: 0.32,       // wave height in metres
+  waveSpeed: 0.7,      // wave animation speed
 };
 const VIEW=GFX.viewDist;
 const scene=new THREE.Scene();
@@ -356,6 +361,42 @@ const terrainMat=new THREE.MeshLambertMaterial({vertexColors:true,flatShading:tr
 // With no environment set it just renders as a flat tinted surface, same as before.
 const waterMat=new THREE.MeshStandardMaterial({color:0x2f72d6,transparent:true,opacity:0.72,
   roughness:0.18, metalness:0.0, envMapIntensity:1.0});
+// Animated waves via onBeforeCompile: a clean-room sum-of-sines heightfield is injected into the
+// Standard material's vertex stage, so we keep three's PBR lighting + env reflection + fog for
+// free and only add displacement + analytically-derived normals. Waves are a function of WORLD
+// position, so adjacent water chunks stay seamless. uTime is advanced each frame in the tick.
+if(GFX.waterWaves){
+  waterMat.onBeforeCompile=(shader)=>{
+    shader.uniforms.uTime={value:0};
+    shader.uniforms.uAmp={value:GFX.waveAmp};
+    waterMat.userData.shader=shader; // keep a handle so the tick can drive uTime
+    shader.vertexShader=shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        uniform float uTime; uniform float uAmp;
+        // 4 directional sine components; returns vec3(height, dH/dx, dH/dz) in world space
+        vec3 waterWaves(vec2 p){
+          vec4 dx=vec4( 1.0, 0.7,-0.6, 0.25);   // wave directions (x)
+          vec4 dz=vec4( 0.0, 0.7, 0.8,-0.97);   // wave directions (z)
+          vec4 k =vec4(0.08,0.14,0.22,0.35);    // spatial frequencies
+          vec4 a =vec4(0.55,0.28,0.12,0.06)*uAmp;// amplitudes (sum ~ uAmp)
+          vec4 s =vec4( 0.9, 1.3, 1.7, 2.4);    // temporal speeds
+          float h=0.0,hx=0.0,hz=0.0;
+          for(int i=0;i<4;i++){
+            float ph=k[i]*(dx[i]*p.x+dz[i]*p.y)+s[i]*uTime;
+            float c=cos(ph);
+            h += a[i]*sin(ph);
+            hx+= a[i]*k[i]*dx[i]*c;
+            hz+= a[i]*k[i]*dz[i]*c;
+          }
+          return vec3(h,hx,hz);
+        }`)
+      .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+        { vec3 wd=waterWaves((modelMatrix*vec4(position,1.0)).xz);
+          objectNormal=normalize(vec3(-wd.y, wd.z, 1.0)); }`) // plane local +Z = world up
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        transformed.z += waterWaves((modelMatrix*vec4(position,1.0)).xz).x;`);
+  };
+}
 const buildMat=new THREE.MeshLambertMaterial({vertexColors:true,flatShading:true});
 const roadMat=new THREE.MeshLambertMaterial({vertexColors:true});
 layerMats.terrain.push(terrainMat); layerMats.water.push(waterMat);
@@ -823,7 +864,8 @@ function buildChunk(cx,cz){
     if(terrainHeight(ox+sx*CHUNK*0.4, oz+sz*CHUNK*0.4) < SEA_LEVEL) hasWater=true;
   }
   if(hasWater){
-    water=new THREE.Mesh(new THREE.PlaneGeometry(CHUNK,CHUNK),waterMat);
+    const wseg=GFX.waterWaves?GFX.waterSegments:1; // subdivide only when waves need vertices
+    water=new THREE.Mesh(new THREE.PlaneGeometry(CHUNK,CHUNK,wseg,wseg),waterMat);
     water.rotation.x=-Math.PI/2; water.position.set(ox,SEA_LEVEL+0.05,oz); scene.add(water);
   }
   let bmesh=null; const bg=buildBuildingsGeo(cx,cz);
@@ -1504,6 +1546,7 @@ function tickInner(){
     tlightLampInst.setColorAt(i, TL_COL[tlState(L.axis,L.ix,L.iz,tNow)]); }
   if(tlightList.length && tlightLampInst.instanceColor) tlightLampInst.instanceColor.needsUpdate=true;
   updateDayNight(dt);
+  if(waterMat.userData.shader) waterMat.userData.shader.uniforms.uTime.value=tNow; // animate waves
   updateParticles(dt);
   fpsN++;fpsT+=dt; if(fpsT>=0.5){fps=Math.round(fpsN/fpsT);fpsN=0;fpsT=0;}
   if(toastT>0){toastT-=dt; if(toastT<=0)toastEl.style.display='none';}
