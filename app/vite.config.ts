@@ -11,5 +11,19 @@ export default defineConfig({
     emptyOutDir: true,
     target: 'es2022',
     sourcemap: false,
+    chunkSizeWarningLimit: 800, // three core is legitimately large; split the rest out
+    rollupOptions: {
+      output: {
+        // split heavy vendor libs into separately-cacheable chunks (better repeat-load + caching;
+        // only the app chunk changes on most edits)
+        manualChunks(id: string) {
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('rapier')) return 'rapier';
+          if (id.includes('postprocessing') || id.includes('n8ao')) return 'postfx';
+          if (id.includes('/three/')) return 'three';
+          return 'vendor';
+        },
+      },
+    },
   },
 });
