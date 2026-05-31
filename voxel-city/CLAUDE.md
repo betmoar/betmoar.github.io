@@ -1,7 +1,7 @@
 # Voxel City — project guide for Claude Code
 
 A single-file, browser-based GTA-style 3D driving/exploration game built with Three.js.
-Live: <https://betmoar.github.io/voxel-city/>  ·  Current version: **v0.2.0** (semver)
+Live: <https://betmoar.github.io/voxel-city/>  ·  Current version: **v0.3.0** (semver)
 
 ## Files
 
@@ -66,6 +66,19 @@ just its centre — past bugs slipped through because the check shared the code�
   road sampling `STEP=2` aligned to this to avoid poke-through). Buildings/roads merged to
   one geometry per chunk; NPCs/props via InstancedMesh (one draw call per pool).
 - **Boardwalks**: raised wooden decks in ~40% of park blocks (in `buildRoadGeo`, height 0.42).
+- **Traffic cars (v0.3.0)**: 5 instanced draw calls — body + cab + glass + wheels (`MAX_CAR*4`).
+  Written each frame in the traffic loop; wheel offsets `CAR_WHEELS` are local-frame, rotated by
+  the car heading. Glass is `MeshStandardMaterial` so it reflects `scene.environment`.
+
+## Realism / atmosphere flags (v0.3.0, in the `GFX` object)
+All default-safe — the game looks identical until toggled, and missing assets never throw.
+- `GFX.scatterFog` / `GFX.fogScatter`: sun-direction fog tint in `updateDayNight` (warm toward the
+  sun near the horizon, cooler away) instead of one flat haze colour. Pure colour math, no assets.
+- `GFX.skybox` / `GFX.skyboxFile` / `GFX.skyboxExposure`: optional equirectangular **LDR** panorama
+  (`.jpg`/`.webp`) from `vendor/hdri/`, loaded by `installSkybox()` with the core `TextureLoader`
+  as `scene.background` + `scene.environment`. ACES tone-mapping turns on only while active.
+  Off by default; if the file is missing it warns and keeps the procedural sky. See
+  `vendor/hdri/README.md`. Water is `MeshStandardMaterial` so it reflects the environment.
 
 ## In-game debug tools (press `~` to toggle DEBUG)
 

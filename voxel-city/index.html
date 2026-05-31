@@ -101,7 +101,7 @@ import {
   SEED, SEA_LEVEL, CHUNK, SEG, RADIUS, GRID_SP, ROAD_W, LANE, GRID_SP_T, HWY_EVERY, HWY_W, CROSS_EVERY, ROAD_WATER_MARGIN, TL_GREEN, TL_YELLOW, TL_HALF, TL_CYCLE, hash, smooth, valueNoise, rng, terrainRaw, citynessRaw, cityness, urbanCore, zone, blockLevel, terrainHeight, nearestLine, isHighwayLine, roadHalfWidth, crossStreetLine, onRoadTile, groundOrBridge, roadHere, buildRoadNetwork, tlOffset, tlState, isPark, buildingAt, buildingFootprintAt
 } from './world.mjs';
 
-const BUILD = '0.2.1'; // SINGLE SOURCE OF TRUTH for the version (semver: MAJOR.MINOR.PATCH).
+const BUILD = '0.3.0'; // SINGLE SOURCE OF TRUTH for the version (semver: MAJOR.MINOR.PATCH).
                        // Bump here only — page <title> and HUD brand are populated at load.
                        // MINOR for new features, PATCH for fixes, MAJOR for big reworks.
 const VERSION = 'v' + BUILD;
@@ -181,6 +181,7 @@ function applyLayers(){
   lampPoleInst.visible=lampHeadInst.visible=trunkInst.visible=foliageInst.visible=L.props;
   tlightPoleInst.visible=tlightHeadInst.visible=tlightLampInst.visible=L.props;
   pedInst.visible=carBodyInst.visible=carCabInst.visible=policeBodyInst.visible=policeTopInst.visible=L.npcs;
+  carGlassInst.visible=carWheelInst.visible=L.npcs;
 }
 
 // ---------- GFX quality config (tweak these to trade visuals vs FPS) ----------
@@ -687,14 +688,33 @@ const pedGeo=buildPedGeo();
 const pedInst=new THREE.InstancedMesh(pedGeo,new THREE.MeshLambertMaterial({vertexColors:true}),MAX_PED);
 pedInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 pedInst.frustumCulled=false; scene.add(pedInst);
-const carBodyGeo=new THREE.BoxGeometry(2.2,0.9,4);
+// Traffic car = body + cab + glass + 4 wheels (5 instanced draw calls total, any car count).
+// Cars travel along their local -Z (length along Z, width along X); wheel/glass offsets below
+// are in that local frame and get rotated by the car's heading each frame.
+const carBodyGeo=new THREE.BoxGeometry(2.1,0.62,4.2);   // lower & longer than before = sleeker
 const carBodyInst=new THREE.InstancedMesh(carBodyGeo,new THREE.MeshLambertMaterial(),MAX_CAR);
 carBodyInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 carBodyInst.frustumCulled=false; scene.add(carBodyInst);
-const carCabGeo=new THREE.BoxGeometry(1.8,0.7,1.8);
-const carCabInst=new THREE.InstancedMesh(carCabGeo,new THREE.MeshLambertMaterial({color:0x223044}),MAX_CAR);
+const carCabGeo=new THREE.BoxGeometry(1.7,0.6,2.0);     // greenhouse, set back over rear axle
+const carCabInst=new THREE.InstancedMesh(carCabGeo,new THREE.MeshLambertMaterial({color:0x1a2330}),MAX_CAR);
 carCabInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 carCabInst.frustumCulled=false; scene.add(carCabInst);
+// glazing band wrapped around the cab — dark, faintly glossy; reflects env when a skybox is on
+const carGlassGeo=new THREE.BoxGeometry(1.74,0.42,2.04);
+const carGlassInst=new THREE.InstancedMesh(carGlassGeo,
+  new THREE.MeshStandardMaterial({color:0x0c1018,roughness:0.15,metalness:0.0,
+    transparent:true,opacity:0.85,envMapIntensity:1.0}),MAX_CAR);
+carGlassInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+carGlassInst.frustumCulled=false; scene.add(carGlassInst);
+// wheels: one cylinder geo (axis baked to local X), 4 instances per car
+const carWheelGeo=new THREE.CylinderGeometry(0.34,0.34,0.26,8); carWheelGeo.rotateZ(Math.PI/2);
+const carWheelInst=new THREE.InstancedMesh(carWheelGeo,
+  new THREE.MeshLambertMaterial({color:0x0a0a0c}),MAX_CAR*4);
+carWheelInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+carWheelInst.frustumCulled=false; scene.add(carWheelInst);
+// local-frame wheel centres (x=±track, y above ground, z=±wheelbase)
+const CAR_WHEELS=[[0.95,0.34,1.35],[-0.95,0.34,1.35],[0.95,0.34,-1.35],[-0.95,0.34,-1.35]];
+const _wp=new THREE.Vector3(); // scratch for rotating a wheel offset into world space
 // per-instance color
 pedInst.instanceColor=new THREE.InstancedBufferAttribute(new Float32Array(MAX_PED*3),3);
 carBodyInst.instanceColor=new THREE.InstancedBufferAttribute(new Float32Array(MAX_CAR*3),3);
@@ -1605,10 +1625,19 @@ function tickInner(){
       t.rot = t.axis===0 ? (t.dir>0?-Math.PI/2:Math.PI/2) : (t.dir>0?Math.PI:0);
       if(carI<MAX_CAR){
         _e.set(0,t.rot,0); _q.setFromEuler(_e);
-        _p.set(t.x,t.y+0.6,t.z); _m.compose(_p,_q,_s);
+        // body sits low; cab + glass set back & up over the rear; 4 wheels at the corners
+        _p.set(t.x,t.y+0.45,t.z); _m.compose(_p,_q,_s);
         carBodyInst.setMatrixAt(carI,_m); carBodyInst.setColorAt(carI,carColors[t.color]);
-        _p.set(t.x,t.y+1.2,t.z); _m.compose(_p,_q,_s);
+        _p.set(t.x,t.y+0.95,t.z-0.15); _m.compose(_p,_q,_s);   // -0.15 local-Z ≈ slightly rearward
         carCabInst.setMatrixAt(carI,_m);
+        _p.set(t.x,t.y+0.95,t.z-0.15); _m.compose(_p,_q,_s);
+        carGlassInst.setMatrixAt(carI,_m);
+        for(let wI=0;wI<4;wI++){
+          const o=CAR_WHEELS[wI];
+          _wp.set(o[0],0,o[2]).applyQuaternion(_q);            // rotate local offset by heading
+          _p.set(t.x+_wp.x, t.y+o[1], t.z+_wp.z); _m.compose(_p,_q,_s);
+          carWheelInst.setMatrixAt(carI*4+wI,_m);
+        }
         carI++;
       }
     }
@@ -1616,7 +1645,9 @@ function tickInner(){
   }
   // limit draws to active instance count (no need to zero-scale the rest)
   pedInst.count=pedI; carBodyInst.count=carI; carCabInst.count=carI;
+  carGlassInst.count=carI; carWheelInst.count=carI*4;
   pedInst.instanceMatrix.needsUpdate=true; carBodyInst.instanceMatrix.needsUpdate=true; carCabInst.instanceMatrix.needsUpdate=true;
+  carGlassInst.instanceMatrix.needsUpdate=true; carWheelInst.instanceMatrix.needsUpdate=true;
   if(pedInst.instanceColor)pedInst.instanceColor.needsUpdate=true;
   if(carBodyInst.instanceColor)carBodyInst.instanceColor.needsUpdate=true;
   for(const m of jobMarkers)m.rotation.y+=dt*1.5;
