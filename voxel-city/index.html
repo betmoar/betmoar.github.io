@@ -96,6 +96,10 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+// Pure, deterministic world logic — single source of truth (also imported by the harness).
+import {
+  SEED, SEA_LEVEL, CHUNK, SEG, RADIUS, GRID_SP, ROAD_W, LANE, GRID_SP_T, HWY_EVERY, HWY_W, CROSS_EVERY, ROAD_WATER_MARGIN, TL_GREEN, TL_YELLOW, TL_HALF, TL_CYCLE, hash, smooth, valueNoise, rng, terrainRaw, citynessRaw, cityness, urbanCore, zone, blockLevel, terrainHeight, nearestLine, isHighwayLine, roadHalfWidth, crossStreetLine, onRoadTile, groundOrBridge, roadHere, buildRoadNetwork, tlOffset, tlState, isPark, buildingAt, buildingFootprintAt
+} from './world.mjs';
 
 const BUILD = 'v50';   // SINGLE SOURCE OF TRUTH for the version. Bump here only — the
                        // page <title> and HUD brand are populated from this at load.
@@ -253,73 +257,7 @@ function updateDayNight(dt){
 }
 let isNight=false;
 
-// ---------- Seeded noise ----------
-const SEED=1337;
-function hash(ix,iz){let h=(ix*374761393+iz*668265263+SEED*982451653)|0;h=(h^(h>>>13))*1274126177;h=h^(h>>>16);return((h>>>0)/4294967296);}
-function smooth(t){return t*t*(3-2*t);}
-function valueNoise(x,z){const x0=Math.floor(x),z0=Math.floor(z),fx=x-x0,fz=z-z0;
- const n00=hash(x0,z0),n10=hash(x0+1,z0),n01=hash(x0,z0+1),n11=hash(x0+1,z0+1);
- const u=smooth(fx),v=smooth(fz);
- const lerp=(a,b,t)=>a+(b-a)*t;
- return lerp(lerp(n00,n10,u),lerp(n01,n11,u),v);}
-// Sea level is 0. Terrain is biased upward so MOST of the world is dry land,
-// with water only in the lowest noise pockets (occasional lakes/rivers).
-const SEA_LEVEL=0;
-// Raw noise height (the underlying landscape, used by cityness).
-function terrainRaw(wx,wz){let h=0,amp=1,freq=0.006,sum=0;
- for(let o=0;o<4;o++){h+=valueNoise(wx*freq,wz*freq)*amp;sum+=amp;amp*=0.5;freq*=2.0;}
- h/=sum; // h in ~0..1
- return (Math.pow(h,1.3)-0.18)*44;}
-// City-ness uses RAW height (so it doesn't depend on the flattening below).
-function citynessRaw(wx,wz){
-  const region=valueNoise(wx*0.0009+100,wz*0.0009-100);
-  if(region<0.52) return 0;
-  const urban=(region-0.52)/0.48;
-  const h=terrainRaw(wx,wz);
-  const flat=1-Math.min(1,Math.abs(terrainRaw(wx+6,wz)-h)/6);
-  const low=1-Math.min(1,Math.max(0,h)/16);
-  return Math.max(0,Math.min(1,(flat*0.5+low*0.5)*urban));
-}
-function cityness(wx,wz){ return citynessRaw(wx,wz); }
-// Urban core intensity: how deep into a downtown we are (0 at city edge, 1 at the dense centre).
-// Uses the region noise peak so each city has a tall packed core that fades to suburbs.
-function urbanCore(wx,wz){
-  const region=valueNoise(wx*0.0009+100,wz*0.0009-100);
-  if(region<0.52) return 0;
-  // remap so core (region near 1.0) => 1, city edge (region~0.52) => 0, with a curve
-  const t=(region-0.52)/0.48;
-  return Math.pow(Math.max(0,Math.min(1,t)),1.6);  // bias toward only the peak being "core"
-}
-// Zone: 0=residential (outer), 1=commercial core (inner), 2=industrial (a separate noise pocket).
-function zone(wx,wz){
-  const core=urbanCore(wx,wz);
-  const ind=valueNoise(wx*0.0022-300,wz*0.0022+220);   // industrial pockets
-  if(ind>0.66 && core<0.55) return 2;                   // industrial: mid-density, not in the core
-  if(core>0.5) return 1;                                 // commercial downtown
-  return 0;                                              // residential
-}
-// Final terrain height: in city areas, flatten toward each GRID block's center height
-// so road corridors and blocks are level (no tearing, smooth driving). Blends out to
-// raw countryside terrain as cityness falls off.
-const GRID_SP_T=32;  // must match GRID_SP (defined later); kept local for height calc
-function blockLevel(wx,wz){
-  // bilinearly interpolate the raw height of the 4 surrounding grid intersections,
-  // so the leveled surface is smooth & continuous (no steps between blocks)
-  const gx0=Math.floor(wx/GRID_SP_T)*GRID_SP_T, gz0=Math.floor(wz/GRID_SP_T)*GRID_SP_T;
-  const gx1=gx0+GRID_SP_T, gz1=gz0+GRID_SP_T;
-  const tx=(wx-gx0)/GRID_SP_T, tz=(wz-gz0)/GRID_SP_T;
-  const h00=terrainRaw(gx0,gz0), h10=terrainRaw(gx1,gz0), h01=terrainRaw(gx0,gz1), h11=terrainRaw(gx1,gz1);
-  const a=h00*(1-tx)+h10*tx, b=h01*(1-tx)+h11*tx;
-  return a*(1-tz)+b*tz;
-}
-function terrainHeight(wx,wz){
-  const raw=terrainRaw(wx,wz);
-  const cn=citynessRaw(wx,wz);
-  if(cn<=0.12) return raw;                       // countryside: untouched
-  const level=blockLevel(wx,wz);
-  const k=Math.min(1,(cn-0.12)/0.4);             // flatten strength ramps with cityness
-  return raw*(1-k)+level*k;                       // blend toward flat block level
-}
+// (world logic imported from world.mjs — see import at top of module)
 function bandColor(h,wx,wz){
   let c;
   if(h<SEA_LEVEL)   c=[0.20,0.45,0.85]; // underwater
@@ -338,39 +276,12 @@ function bandColor(h,wx,wz){
   }
   return c;
 }
-function rng(cx,cz,salt){let a=(cx*73856093)^(cz*19349663)^(salt*83492791)^SEED;
-  return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
-
-// ---------- Chunk streaming ----------
-const CHUNK=48,SEG=24,RADIUS=4;
-
-// ---------- Global Manhattan road grid ----------
-// Roads run along world lines where (coord mod GRID_SP) is within ROAD_W of 0.
-const GRID_SP=32;      // spacing between road centerlines
-const ROAD_W=5;        // half-width of a road (so road is 10 units wide)
-const LANE=2.2;        // lane offset from centerline
-function nearestLine(v){ return Math.round(v/GRID_SP)*GRID_SP; }
-// Highways: every 5th grid line is a wide arterial. isHighwayLine(coord) true on those lines.
-const HWY_EVERY=6, HWY_W=9;
-const CROSS_EVERY=3;
-function isHighwayLine(lineCoord){ return ((Math.round(lineCoord/GRID_SP)%HWY_EVERY)+HWY_EVERY)%HWY_EVERY===0; }
-function roadHalfWidth(lineCoord){ return isHighwayLine(lineCoord)?HWY_W:ROAD_W; }
-// Cross-streets (horizontal roads) are sparse: only every CROSS_EVERY line + highways.
-function crossStreetLine(c){ if(isHighwayLine(c)) return true; return ((Math.round(c/GRID_SP)%CROSS_EVERY)+CROSS_EVERY)%CROSS_EVERY===0; }
+// (world logic imported from world.mjs — see import at top of module)
 function onRoad(wx,wz){
   const lx=nearestLine(wx), lz=nearestLine(wz);
   return Math.abs(wx-lx)<=roadHalfWidth(lx) || (crossStreetLine(lz)&&Math.abs(wz-lz)<=roadHalfWidth(lz));
 }
-function onRoadTile(wx,wz){ // stricter: used to forbid buildings, with margin
-  const lx=nearestLine(wx), lz=nearestLine(wz);
-  const onV=Math.abs(wx-lx)<=roadHalfWidth(lx)+2;
-  const onH=crossStreetLine(lz)&&Math.abs(wz-lz)<=roadHalfWidth(lz)+2;
-  return onV||onH;
-}
-// Effective walking/driving height: terrain, clamped to sea level over water.
-function groundOrBridge(wx,wz){
-  return Math.max(terrainHeight(wx,wz),SEA_LEVEL);
-}
+// (world logic imported from world.mjs — see import at top of module)
 
 const terrainMat=new THREE.MeshLambertMaterial({vertexColors:true,flatShading:true});
 const waterMat=new THREE.MeshLambertMaterial({color:0x2f72d6,transparent:true,opacity:0.7});
@@ -390,88 +301,7 @@ function buildTerrainGeo(ox,oz){
     colors.push(c[0],c[1],c[2]);}
   g.setAttribute('color',new THREE.Float32BufferAttribute(colors,3)); g.computeVertexNormals(); return g;
 }
-// ============================================================================
-// ROAD NETWORK AS DATA — single source of truth, then render from it.
-// buildRoadNetwork() returns validated {segments, intersections}; nothing is
-// emitted that isn't in the model, so markings/crosswalks can't escape onto
-// water or grass. roadHere() is THE predicate both layout and physics use.
-// ============================================================================
-const ROAD_WATER_MARGIN = 1.5; // keep roads this far back from the shoreline
-// THE single road predicate: is there drivable road surface at world (wx,wz)?
-function roadHere(wx,wz){
-  const lx=nearestLine(wx), lz=nearestLine(wz);
-  const onV = Math.abs(wx-lx)<=roadHalfWidth(lx);                       // avenue (every line)
-  const onH = crossStreetLine(lz) && Math.abs(wz-lz)<=roadHalfWidth(lz); // cross-street (sparse)
-  if(!onV && !onH) return false;
-  if(terrainHeight(wx,wz) < SEA_LEVEL + ROAD_WATER_MARGIN) return false; // not over/near water
-  // tie to developed blocks: the road line must border an urban block
-  if(onV){ const a=cityness(lx-GRID_SP/2,wz), b=cityness(lx+GRID_SP/2,wz); if(Math.max(a,b)>=0.3) return true; }
-  if(onH){ const a=cityness(wx,lz-GRID_SP/2), b=cityness(wx,lz+GRID_SP/2); if(Math.max(a,b)>=0.3) return true; }
-  return false;
-}
-// Build the validated road model for a chunk: a list of short road segments along
-// grid lines (only where roadHere holds), and intersections where two roads cross.
-function buildRoadNetwork(cx,cz){
-  const ox=cx*CHUNK, oz=cz*CHUNK, STEP=2;
-  const segments=[], intersections=[];
-  // vertical segments (constant x)
-  for(let lineX=Math.round((ox-CHUNK/2)/GRID_SP)*GRID_SP-GRID_SP; lineX<=ox+CHUNK/2+GRID_SP; lineX+=GRID_SP){
-    if(lineX<ox-CHUNK/2-0.01||lineX>=ox+CHUNK/2-0.01) continue;
-    const HW=roadHalfWidth(lineX), type=HW>ROAD_W?'hwy':'st';
-    for(let z=oz-CHUNK/2; z<oz+CHUNK/2; z+=STEP){
-      const zc=z+STEP/2;
-      if(!roadHere(lineX,zc)) continue;       // single predicate decides everything
-      segments.push({x:lineX, z, z2:z+STEP, vertical:true, hw:HW, type});
-    }
-  }
-  // horizontal segments (constant z)
-  for(let lineZ=Math.round((oz-CHUNK/2)/GRID_SP)*GRID_SP-GRID_SP; lineZ<=oz+CHUNK/2+GRID_SP; lineZ+=GRID_SP){
-    if(lineZ<oz-CHUNK/2-0.01||lineZ>=oz+CHUNK/2-0.01) continue;
-    const HW=roadHalfWidth(lineZ), type=HW>ROAD_W?'hwy':'st';
-    for(let x=ox-CHUNK/2; x<ox+CHUNK/2; x+=STEP){
-      const xc=x+STEP/2;
-      if(!roadHere(xc,lineZ)) continue;
-      segments.push({x, x2:x+STEP, z:lineZ, vertical:false, hw:HW, type});
-    }
-  }
-  // intersections: grid crossing where BOTH a vertical and horizontal road exist at the junction
-  const gx0=Math.floor((ox-CHUNK/2)/GRID_SP)*GRID_SP, gx1=Math.ceil((ox+CHUNK/2)/GRID_SP)*GRID_SP;
-  const gz0=Math.floor((oz-CHUNK/2)/GRID_SP)*GRID_SP, gz1=Math.ceil((oz+CHUNK/2)/GRID_SP)*GRID_SP;
-  for(let lineX=gx0; lineX<=gx1; lineX+=GRID_SP){
-    for(let lineZ=gz0; lineZ<=gz1; lineZ+=GRID_SP){
-      // require road on BOTH lines AT the junction, and the junction itself on land
-      if(!roadHere(lineX,lineZ)) continue;
-      // verify it's a genuine crossing: road continues along both axes through here
-      const vOK = roadHere(lineX,lineZ-GRID_SP/2)||roadHere(lineX,lineZ+GRID_SP/2);
-      const hOK = roadHere(lineX-GRID_SP/2,lineZ)||roadHere(lineX+GRID_SP/2,lineZ);
-      if(!(vOK&&hOK)) continue;
-      const light = isHighwayLine(lineX) && isHighwayLine(lineZ); // major junctions only
-      intersections.push({x:lineX, z:lineZ, hwx:roadHalfWidth(lineX), hwz:roadHalfWidth(lineZ), light});
-    }
-  }
-  return {segments, intersections};
-}
-
-// ---------- traffic signals (pure timing logic) — keep in sync with world.mjs ----------
-// Functional signals at highway×highway junctions. Pure + deterministic from (ix,iz,t) so the
-// renderer (lamp colour) and the simulation (which cars must stop) always agree, and so the
-// harness can verify the state machine without a GPU.
-const TL_GREEN = 7, TL_YELLOW = 2, TL_HALF = TL_GREEN + TL_YELLOW, TL_CYCLE = TL_HALF * 2;
-// Per-junction phase offset so the whole city doesn't switch in lockstep.
-function tlOffset(ix, iz) {
-  const k = Math.round(ix / GRID_SP) * 7 + Math.round(iz / GRID_SP) * 13;
-  return ((k % TL_CYCLE) + TL_CYCLE) % TL_CYCLE;
-}
-// Signal state for one travel axis at junction (ix,iz) at time t: 0=green, 1=yellow, 2=red.
-// axis 0 (cars moving along X) and axis 1 (cars moving along Z) are a half-cycle apart, so the
-// two directions are never green at the same time.
-function tlState(axis, ix, iz, t) {
-  const phase = (((t + tlOffset(ix, iz)) % TL_CYCLE) + TL_CYCLE) % TL_CYCLE;
-  const local = axis === 0 ? phase : (phase + TL_HALF) % TL_CYCLE;
-  if (local < TL_GREEN) return 0;
-  if (local < TL_HALF) return 1;
-  return 2;
-}
+// (world logic imported from world.mjs — see import at top of module)
 // Nearest highway grid line strictly ahead of v in travel direction dir (highway lines sit at
 // multiples of GRID_SP*HWY_EVERY). Used to find the junction a car is approaching.
 function nextHighwayLine(v, dir) {
@@ -714,59 +544,7 @@ function buildBuildingsGeo(cx,cz){
   g.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
   return g;
 }
-// ~1 in 6 city blocks is a park (trees, no building). Deterministic per block.
-function isPark(blockX,blockZ){
-  const pr=rng(Math.round(blockX),Math.round(blockZ),23);
-  return cityness(blockX,blockZ)>0.2 && pr()<0.16;
-}
-// ============================================================================
-// SINGLE SOURCE OF TRUTH for building placement (Phase 2).
-// Given a block-centre (lx,lz), returns null (no building) or the full spec.
-// BOTH the geometry builder and collision call this — the RNG call sequence
-// (density, w, d, colour-index) lives in exactly one place, so collision can
-// never disagree with what's drawn. `rngState` is returned so the geometry
-// builder can continue the SAME rng for roof features without re-seeding.
-// ============================================================================
-function buildingAt(lx,lz){
-  if(onRoadTile(lx,lz)) return null;          // never on a road
-  if(isPark(lx,lz)) return null;              // park block: no building
-  const cn=cityness(lx,lz);
-  const core=urbanCore(lx,lz);
-  const zn=zone(lx,lz);
-  const br=rng(Math.round(lx),Math.round(lz),11); // per-block deterministic rng
-  const density = zn===1 ? Math.min(1,0.55+core*0.5)
-                : zn===2 ? 0.6
-                : Math.min(0.75,cn*0.7+0.15);
-  if(br()>density) return null;               // rng call #1: density gate
-  const room=GRID_SP-2*ROAD_W-3;
-  const fillBase = zn===0 ? 0.45 : zn===2 ? 0.7 : 0.6;
-  const w=Math.max(4,room*(fillBase+br()*0.35)); // rng call #2
-  const d=Math.max(4,room*(fillBase+br()*0.35)); // rng call #3
-  const hw=w/2, hd=d/2;
-  const c1=terrainHeight(lx-hw,lz-hd), c2=terrainHeight(lx+hw,lz-hd),
-        c3=terrainHeight(lx-hw,lz+hd), c4=terrainHeight(lx+hw,lz+hd);
-  const lowG=Math.min(c1,c2,c3,c4), highG=Math.max(c1,c2,c3,c4);
-  if(lowG<SEA_LEVEL+0.5) return null;         // underwater corner
-  if(highG-lowG>6) return null;               // too steep
-  const lr=rng(Math.round(lx),Math.round(lz),41);
-  const isLandmark = core>0.78 && lr()<0.10;
-  let hgt;
-  if(isLandmark) hgt = 80+lr()*60;
-  else if(zn===1) hgt = 12 + core*core*70 + br()*14;   // rng call #4 (commercial only)
-  else if(zn===2) hgt = 7 + br()*8;                     // rng call #4 (industrial)
-  else            hgt = 6 + br()*(6+core*10);           // rng call #4 (residential)
-  return { lx, lz, w, d, hw, hd, lowG, highG, isLandmark, hgt, zn, core, br };
-}
-// Returns true if world point (x,z) falls inside a building's footprint.
-// Uses buildingAt() — the SAME spec the geometry is built from — so collision
-// and visuals can never disagree.
-function buildingFootprintAt(x,z){
-  const bx=Math.round((x-GRID_SP/2)/GRID_SP)*GRID_SP+GRID_SP/2;
-  const bz=Math.round((z-GRID_SP/2)/GRID_SP)*GRID_SP+GRID_SP/2;
-  const B=buildingAt(bx,bz);
-  if(!B) return false;
-  return Math.abs(x-bx)<B.hw+1 && Math.abs(z-bz)<B.hd+1;
-}
+// (world logic imported from world.mjs — see import at top of module)
 function addBox(P,N,C,cx,cy,cz,w,h,d,col){
   const x=w/2,y=h/2,z=d/2;
   const v=[[-x,-y,-z],[x,-y,-z],[x,y,-z],[-x,y,-z],[-x,-y,z],[x,-y,z],[x,y,z],[-x,y,z]];

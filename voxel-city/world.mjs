@@ -1,7 +1,7 @@
-// world.mjs — canonical PURE world logic for VOXEL CITY.
+// world.mjs — canonical PURE world logic for VOXEL CITY. SINGLE SOURCE OF TRUTH.
 // No THREE.js, no DOM, no rendering. Deterministic from SEED.
-// The game (sandbox-city.html) inlines an identical copy; harness.mjs imports THIS.
-// The harness verifies the two stay in sync (see checkInSync in harness.mjs).
+// Both the game (index.html) and the harness import THIS module directly — there is no
+// inlined copy. harness.mjs --sync just asserts index.html still imports it (see checkInSync).
 
 // ---------- constants ----------
 export const SEED = 1337;

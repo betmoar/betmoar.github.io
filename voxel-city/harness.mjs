@@ -211,43 +211,30 @@ const INVARIANTS = {
   'terrain heights finite': inv_finiteHeights,
 };
 
-// ---------- sync check: game file's inlined logic must match world.mjs ----------
-// Compares the body of key functions (whitespace-normalised) between the two sources, so
-// editing the game without updating world.mjs (or vice-versa) is caught immediately.
+// ---------- import check: game file uses world.mjs as the single source ----------
+// The game no longer inlines a copy of the world logic — it imports it from world.mjs (the
+// same module this harness tests). This used to be a body-equality "sync" check between two
+// copies; now there's one copy, so instead we assert the game still imports it and hasn't
+// re-inlined any world function (which would silently shadow the import and reintroduce drift).
 function checkInSync() {
-  console.log('\nSync check (game inline vs world.mjs):');
-  let html;
-  // The game file is index.html (historically sandbox-city.html); accept either.
-  const candidates = ['./index.html', './sandbox-city.html'];
-  let gameFile = null;
-  for (const c of candidates) {
-    try { html = readFileSync(new URL(c, import.meta.url), 'utf8'); gameFile = c; break; }
-    catch { /* try next */ }
+  console.log('\nImport check (game imports world.mjs, no re-inlined copy):');
+  let html, gameFile = null;
+  for (const c of ['./index.html', './sandbox-city.html']) {
+    try { html = readFileSync(new URL(c, import.meta.url), 'utf8'); gameFile = c; break; } catch { /* next */ }
   }
-  if (gameFile == null) { report('read game file', false, `none of ${candidates.join(', ')} found`); return; }
-  const wsrc = readFileSync(new URL('./world.mjs', import.meta.url), 'utf8');
-  // Canonicalise: strip comments, then remove ALL whitespace. Two bodies that differ only
-  // in formatting/comments collapse to the same string; a real logic change does not.
-  const norm = s => s
-    .replace(/\/\/[^\n]*/g, '')          // line comments
-    .replace(/\/\*[\s\S]*?\*\//g, '')    // block comments
-    .replace(/\s+/g, '')                 // all whitespace
-    .replace(/;}/g, '}');                // trailing semicolons before close
-  // pull the body of a named function from each source
-  function body(src, name) {
-    const re = new RegExp('function\\s+' + name + '\\s*\\([^)]*\\)\\s*\\{');
-    const m = re.exec(src); if (!m) return null;
-    let i = m.index + m[0].length, depth = 1;
-    for (; i < src.length && depth > 0; i++) { if (src[i] === '{') depth++; else if (src[i] === '}') depth--; }
-    return norm(src.slice(m.index + m[0].length, i - 1));
-  }
-  const fns = ['terrainRaw', 'citynessRaw', 'urbanCore', 'zone', 'blockLevel', 'terrainHeight', 'roadHere', 'buildRoadNetwork', 'tlOffset', 'tlState', 'isPark', 'buildingAt', 'buildingFootprintAt'];
-  for (const fn of fns) {
-    const a = body(html, fn), b = body(wsrc, fn);
-    if (a == null) { report(`sync ${fn}`, false, 'not found in game file'); continue; }
-    if (b == null) { report(`sync ${fn}`, false, 'not found in world.mjs'); continue; }
-    report(`sync ${fn}`, a === b, a === b ? '' : 'bodies differ — update both copies');
-  }
+  if (gameFile == null) { report('read game file', false, 'index.html not found'); return; }
+
+  // 1) it imports from world.mjs
+  report('imports ./world.mjs', /import\s*\{[\s\S]*?\}\s*from\s*['"]\.\/world\.mjs['"]/.test(html));
+
+  // 2) every world function is NOT re-declared inline in the game (that would shadow the import)
+  const worldFns = ['hash', 'smooth', 'valueNoise', 'rng', 'terrainRaw', 'citynessRaw', 'cityness',
+    'urbanCore', 'zone', 'blockLevel', 'terrainHeight', 'nearestLine', 'isHighwayLine', 'roadHalfWidth',
+    'crossStreetLine', 'onRoadTile', 'groundOrBridge', 'roadHere', 'buildRoadNetwork', 'tlOffset',
+    'tlState', 'isPark', 'buildingAt', 'buildingFootprintAt'];
+  const reinlined = worldFns.filter(fn => new RegExp('function\\s+' + fn + '\\s*\\(').test(html));
+  report('no re-inlined world functions', reinlined.length === 0,
+    reinlined.length ? 'shadows import: ' + reinlined.join(', ') : '');
 }
 
 // ---------- run ----------
