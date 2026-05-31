@@ -1,7 +1,7 @@
 # Voxel City — project guide for Claude Code
 
 A single-file, browser-based GTA-style 3D driving/exploration game built with Three.js.
-Live: <https://betmoar.github.io/voxel-city/>  ·  Current version: **v51**
+Live: <https://betmoar.github.io/voxel-city/>  ·  Current version: **v0.2.0** (semver)
 
 ## Files
 
@@ -79,11 +79,11 @@ just its centre — past bugs slipped through because the check shared the code�
 
 ## Verify you have the right build
 
-The version has **one source of truth**: `const BUILD = 'vNN'` near the top of the module
-script. Bump it there only — the page `<title>`, the HUD brand panel (top-left, `#ver`), and
-the console log on load are all populated from `BUILD` at runtime. Now that this is a real
-repo (not a drag-and-drop single file), there's no reason to keep version literals in sync by
-hand.
+The version has **one source of truth**: `const BUILD = 'MAJOR.MINOR.PATCH'` (semver) near the
+top of the module script — bump **PATCH** for fixes, **MINOR** for new features, **MAJOR** for
+big reworks. The page `<title>`, the HUD brand panel (top-left, `#ver`), and the console log on
+load are all derived from it at runtime (displayed as `v` + BUILD), so there are no version
+literals to keep in sync by hand.
 
 ## Known follow-ups / not done
 

@@ -101,11 +101,13 @@ import {
   SEED, SEA_LEVEL, CHUNK, SEG, RADIUS, GRID_SP, ROAD_W, LANE, GRID_SP_T, HWY_EVERY, HWY_W, CROSS_EVERY, ROAD_WATER_MARGIN, TL_GREEN, TL_YELLOW, TL_HALF, TL_CYCLE, hash, smooth, valueNoise, rng, terrainRaw, citynessRaw, cityness, urbanCore, zone, blockLevel, terrainHeight, nearestLine, isHighwayLine, roadHalfWidth, crossStreetLine, onRoadTile, groundOrBridge, roadHere, buildRoadNetwork, tlOffset, tlState, isPark, buildingAt, buildingFootprintAt
 } from './world.mjs';
 
-const BUILD = 'v50';   // SINGLE SOURCE OF TRUTH for the version. Bump here only — the
-                       // page <title> and HUD brand are populated from this at load.
-document.title = 'VOXEL CITY — Infinite 8-bit Hustle [' + BUILD + ']';
-{ const verEl = document.getElementById('ver'); if (verEl) verEl.textContent = BUILD; }
-console.log('%cVOXEL CITY '+BUILD+' — crosswalk stripe clipping active', 'color:#7CFC9A;font-weight:bold');
+const BUILD = '0.2.0'; // SINGLE SOURCE OF TRUTH for the version (semver: MAJOR.MINOR.PATCH).
+                       // Bump here only — page <title> and HUD brand are populated at load.
+                       // MINOR for new features, PATCH for fixes, MAJOR for big reworks.
+const VERSION = 'v' + BUILD;
+document.title = 'VOXEL CITY — Infinite 8-bit Hustle [' + VERSION + ']';
+{ const verEl = document.getElementById('ver'); if (verEl) verEl.textContent = VERSION; }
+console.log('%cVOXEL CITY '+VERSION+' ready', 'color:#7CFC9A;font-weight:bold');
 
 // ============================================================================
 // RUNTIME SAFETY NET  (Phase 1)
