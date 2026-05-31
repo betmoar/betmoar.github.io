@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>betmoar</title>
+<meta name="description" content="betmoar — workshop, experiments, and field notes." />
+<meta name="color-scheme" content="dark" />
+<link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'&gt;&lt;rect width='32' height='32' fill='%230a0c0f'/&gt;&lt;path d='M7 22 V10 h7 a4 4 0 0 1 0 8 h-7 m0 -4 h8 a4 4 0 0 1 0 8 h-8' fill='none' stroke='%23d9b15a' stroke-width='2'/&gt;&lt;/svg&gt;" />
+<style>
+  :root{
+    --bg:#0a0c0f;
+    --panel:#0d1014;
+    --ink:#d7dde3;
+    --ink-dim:#7b848d;
+    --ink-faint:#454c54;
+    --line:#1b2026;
+    --line-soft:#13171c;
+    --accent:#d9b15a;        /* muted amber */
+    --accent-cool:#5a86d9;   /* cool slate-blue */
+    --good:#5fb98a;
+    --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  }
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--sans);
+    font-size:15px;
+    line-height:1.6;
+    letter-spacing:.1px;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+    min-height:100vh;
+    overflow-x:hidden;
+  }
+
+  /* faint engineering grid + vignette */
+  body::before{
+    content:"";
+    position:fixed; inset:0; z-index:0; pointer-events:none;
+    background-image:
+      linear-gradient(var(--line-soft) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line-soft) 1px,transparent 1px);
+    background-size:44px 44px;
+    mask-image:radial-gradient(ellipse 80% 70% at 50% 30%,#000 40%,transparent 100%);
+    -webkit-mask-image:radial-gradient(ellipse 80% 70% at 50% 30%,#000 40%,transparent 100%);
+    opacity:.5;
+  }
+  body::after{
+    content:"";
+    position:fixed; inset:0; z-index:0; pointer-events:none;
+    background:radial-gradient(ellipse 120% 90% at 50% -10%,rgba(217,177,90,.05),transparent 55%);
+  }
+
+  .wrap{position:relative; z-index:1; max-width:880px; margin:0 auto; padding:0 28px}
+
+  /* ---- top bar ---- */
+  header{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:22px 0 0;
+  }
+  .brand{display:flex; align-items:center; gap:12px; font-family:var(--mono); font-size:13px; letter-spacing:.5px}
+  .glyph{
+    width:26px; height:26px; flex:none;
+    border:1px solid var(--line); border-radius:5px;
+    display:grid; place-items:center;
+    color:var(--accent); font-weight:600;
+    background:linear-gradient(180deg,rgba(255,255,255,.02),transparent);
+  }
+  .brand b{color:var(--ink); font-weight:600}
+  .brand .slash{color:var(--ink-faint)}
+  .status{
+    font-family:var(--mono); font-size:11px; letter-spacing:.6px;
+    color:var(--ink-dim); display:flex; align-items:center; gap:7px;
+    text-transform:uppercase;
+  }
+  .dot{width:7px; height:7px; border-radius:50%; background:var(--good);
+    box-shadow:0 0 0 0 rgba(95,185,138,.5); animation:pulse 2.6s infinite}
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(95,185,138,.45)}
+    70%{box-shadow:0 0 0 7px rgba(95,185,138,0)}
+    100%{box-shadow:0 0 0 0 rgba(95,185,138,0)}
+  }
+
+  /* ---- hero ---- */
+  .hero{padding:96px 0 64px}
+  .eyebrow{
+    font-family:var(--mono); font-size:12px; letter-spacing:2.5px;
+    text-transform:uppercase; color:var(--accent);
+    display:flex; align-items:center; gap:12px; margin-bottom:26px;
+  }
+  .eyebrow::before{content:""; width:30px; height:1px; background:var(--accent); opacity:.6}
+
+  h1{
+    font-size:clamp(40px,7vw,72px);
+    line-height:1.02; margin:0;
+    font-weight:600; letter-spacing:-1.5px;
+    color:#f1f4f7;
+  }
+  h1 .cursor{
+    display:inline-block; width:.5ch; height:.92em; margin-left:4px;
+    transform:translateY(.1em);
+    background:var(--accent); animation:blink 1.15s steps(1) infinite;
+  }
+  @keyframes blink{50%{opacity:0}}
+
+  .lede{
+    margin:26px 0 0; max-width:560px;
+    color:var(--ink-dim); font-size:17px; line-height:1.7;
+  }
+  .lede b{color:var(--ink); font-weight:500}
+
+  .cta{display:flex; flex-wrap:wrap; gap:12px; margin-top:38px}
+  .btn{
+    font-family:var(--mono); font-size:12.5px; letter-spacing:.4px;
+    text-decoration:none; color:var(--ink);
+    border:1px solid var(--line);
+    padding:11px 17px; border-radius:7px;
+    background:var(--panel);
+    display:inline-flex; align-items:center; gap:9px;
+    transition:border-color .18s ease,color .18s ease,transform .18s ease,background .18s ease;
+  }
+  .btn:hover{border-color:var(--accent); color:#fff; transform:translateY(-1px)}
+  .btn .arrow{color:var(--ink-faint); transition:transform .18s ease,color .18s ease}
+  .btn:hover .arrow{color:var(--accent); transform:translate(2px,-2px)}
+  .btn.ghost{background:transparent}
+
+  /* ---- section heading ---- */
+  .sec-head{
+    display:flex; align-items:baseline; gap:14px;
+    font-family:var(--mono); font-size:12px; letter-spacing:1.5px;
+    text-transform:uppercase; color:var(--ink-dim);
+    margin:0 0 22px;
+  }
+  .sec-head .idx{color:var(--accent); font-size:11px}
+  .sec-head .rule{flex:1; height:1px; background:var(--line); align-self:center}
+
+  /* ---- projects ---- */
+  .projects{padding:8px 0 8px}
+  a.card{
+    display:block; text-decoration:none; color:inherit;
+    border:1px solid var(--line); border-radius:10px;
+    background:linear-gradient(180deg,rgba(255,255,255,.012),transparent);
+    padding:22px 24px; position:relative; overflow:hidden;
+    transition:border-color .2s ease,background .2s ease,transform .2s ease;
+  }
+  a.card + a.card{margin-top:14px}
+  a.card::before{
+    content:""; position:absolute; left:0; top:0; bottom:0; width:2px;
+    background:var(--accent); transform:scaleY(0); transform-origin:top;
+    transition:transform .22s ease;
+  }
+  a.card:hover{border-color:#2b333c; background:rgba(255,255,255,.02); transform:translateY(-1px)}
+  a.card:hover::before{transform:scaleY(1)}
+  .card-top{display:flex; align-items:center; justify-content:space-between; gap:16px}
+  .card-title{font-size:18px; font-weight:600; color:#eef2f5; letter-spacing:-.2px;
+    display:flex; align-items:center; gap:11px}
+  .tag{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.8px;
+    text-transform:uppercase; color:var(--accent-cool);
+    border:1px solid var(--line); border-radius:20px; padding:3px 9px;
+  }
+  .card-meta{font-family:var(--mono); font-size:11px; color:var(--ink-faint); letter-spacing:.5px}
+  .card-desc{margin:11px 0 0; color:var(--ink-dim); font-size:14.5px; max-width:60ch}
+  .card-stack{margin:16px 0 0; display:flex; flex-wrap:wrap; gap:7px}
+  .chip{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.4px;
+    color:var(--ink-dim); background:var(--panel);
+    border:1px solid var(--line-soft); border-radius:5px; padding:3px 8px;
+  }
+
+  /* ---- placeholder card ---- */
+  .soon{
+    border:1px dashed var(--line); border-radius:10px;
+    padding:20px 24px; margin-top:14px;
+    font-family:var(--mono); font-size:12.5px; color:var(--ink-faint);
+    letter-spacing:.4px; display:flex; align-items:center; gap:10px;
+  }
+  .soon .blink{color:var(--accent); animation:blink 1.15s steps(1) infinite}
+
+  /* ---- footer ---- */
+  footer{
+    margin-top:70px; padding:26px 0 40px;
+    border-top:1px solid var(--line);
+    display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:14px;
+    font-family:var(--mono); font-size:11.5px; color:var(--ink-faint); letter-spacing:.5px;
+  }
+  footer a{color:var(--ink-dim); text-decoration:none; transition:color .18s ease}
+  footer a:hover{color:var(--accent)}
+  .foot-links{display:flex; gap:20px}
+
+  @media (max-width:560px){
+    .hero{padding:72px 0 48px}
+    .status{display:none}
+    footer{flex-direction:column; align-items:flex-start}
+  }
+
+  /* reveal */
+  .reveal{opacity:0; transform:translateY(12px); animation:rise .7s ease forwards}
+  .reveal.d1{animation-delay:.05s}
+  .reveal.d2{animation-delay:.13s}
+  .reveal.d3{animation-delay:.22s}
+  .reveal.d4{animation-delay:.32s}
+  @keyframes rise{to{opacity:1; transform:none}}
+  @media (prefers-reduced-motion:reduce){
+    .reveal{animation:none; opacity:1; transform:none}
+    .cursor,.dot,.blink{animation:none}
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="reveal">
+      <div class="brand">
+        <span class="glyph">b</span>
+        <span><b>betmoar</b><span class="slash"> / </span>workshop</span>
+      </div>
+      <div class="status"><span class="dot"></span>systems&nbsp;nominal</div>
+    </header>
+
+    <section class="hero">
+      <div class="eyebrow reveal d1">// build · break · iterate</div>
+      <h1 class="reveal d1">betmoar<span class="cursor"></span></h1>
+      <p class="lede reveal d2">
+        A small workshop for <b>graphics</b>, <b>simulation</b>, and the occasional
+        <b>weird experiment</b>. Single-file builds, no ceremony — drag into a browser
+        and it runs.
+      </p>
+      <div class="cta reveal d2">
+        <a class="btn" href="./voxel-city/index.html">
+          launch voxel city <span class="arrow">↗</span>
+        </a>
+        <a class="btn ghost" href="https://github.com/betmoar" target="_blank" rel="noopener">
+          source <span class="arrow">↗</span>
+        </a>
+      </div>
+    </section>
+
+    <section class="projects">
+      <div class="sec-head reveal">
+        <span class="idx">01</span><span>Projects</span><span class="rule"></span>
+      </div>
+
+      <a class="card reveal" href="./voxel-city/index.html">
+        <div class="card-top">
+          <div class="card-title">Voxel City <span class="tag">live</span></div>
+          <div class="card-meta">three.js · ~100kb</div>
+        </div>
+        <p class="card-desc">
+          A procedurally generated voxel world rendered in the browser — roads, water,
+          intersections, and buildings, all driven by a single pure world model with a
+          headless regression harness keeping the inlined game logic honest.
+        </p>
+        <div class="card-stack">
+          <span class="chip">WebGL</span>
+          <span class="chip">procedural-gen</span>
+          <span class="chip">single-file</span>
+          <span class="chip">invariant tests</span>
+        </div>
+      </a>
+
+      <div class="soon reveal">
+        <span class="blink">▍</span> more in the pipeline — check back soon
+      </div>
+    </section>
+
+    <footer class="reveal">
+      <div>© <span id="yr">2026</span> betmoar · built in the open</div>
+      <div class="foot-links">
+        <a href="https://github.com/betmoar" target="_blank" rel="noopener">github</a>
+        <a href="./voxel-city/index.html">voxel city</a>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    document.getElementById('yr').textContent = new Date().getFullYear();
+  </script>
+</body>
+</html>
