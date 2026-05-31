@@ -10,7 +10,7 @@ import { loadAssets } from './assets/loaders';
 import { updateTraffic } from './sim/traffic';
 import { updatePeds } from './sim/peds';
 import { CarInstances, PedInstances, CrateInstances } from './render/instances';
-import { PhysicsWorld } from './physics/rapier';
+import type { PhysicsWorld } from './physics/rapier';
 import { CameraController } from './core/controls';
 import { CHUNK, buildRoadNetwork, terrainHeight } from './world/world';
 
@@ -63,9 +63,12 @@ const mats: ChunkMaterials = {
 };
 
 const assets = await loadAssets(import.meta.env.BASE_URL);
-const physics = await PhysicsWorld.create();
 const buildingRings = Math.max(1, cfg.drawRings - 1); // buildings + physics within an inner ring
-const chunks = new ChunkManager(scene, mats, cfg.drawRings, buildingRings, assets.kits, physics);
+const chunks = new ChunkManager(scene, mats, cfg.drawRings, buildingRings, assets.kits);
+// Physics (Rapier) loads lazily — its WASM is large, so the city renders immediately and physics
+// attaches when ready (enabling crates + walk mode a moment later).
+let physics: PhysicsWorld | null = null;
+let pendingWalk = false;
 
 const post = createPost(renderer, scene, camera, tier);
 const carInstances = new CarInstances(scene, assets.vehicle);
@@ -80,10 +83,18 @@ function findStart(): { x: number; z: number } {
 }
 const start = findStart();
 const controls = new CameraController(camera, canvas, start);
-const character = physics.createCharacter(start.x, terrainHeight(start.x, start.z) + 3, start.z);
-controls.attachWalker(physics, character);
-if (params.get('mode') === 'walk') controls.setMode('walk');
 if (params.get('mode') === 'fly') controls.setMode('fly');
+if (params.get('mode') === 'walk') pendingWalk = true; // applied once physics + character exist
+
+// kick off physics load in the background via dynamic import — keeps Rapier's large WASM chunk OFF
+// the critical path so the city paints immediately; physics + walk mode light up a moment later.
+import('./physics/rapier').then(({ PhysicsWorld }) => PhysicsWorld.create()).then((p) => {
+  physics = p;
+  chunks.setPhysics(p);
+  const character = p.createCharacter(start.x, terrainHeight(start.x, start.z) + 3, start.z);
+  controls.attachWalker(p, character);
+  if (pendingWalk) controls.setMode('walk');
+});
 
 addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -108,17 +119,19 @@ renderer.setAnimationLoop(() => {
   updateTraffic(dt, focus.x, focus.z);
   updatePeds(dt, focus.x, focus.z);
 
-  // rain a few physics crates near the focus so the Rapier world is visibly working
-  crateTimer += dt;
-  if (crateTimer > 0.35) {
-    crateTimer = 0;
-    physics.spawnCrate(focus.x + (Math.random() - 0.5) * 30, terrainHeight(focus.x, focus.z) + 22, focus.z + (Math.random() - 0.5) * 30);
+  // physics runs once Rapier has finished loading in the background
+  if (physics) {
+    crateTimer += dt;
+    if (crateTimer > 0.35) {
+      crateTimer = 0;
+      physics.spawnCrate(focus.x + (Math.random() - 0.5) * 30, terrainHeight(focus.x, focus.z) + 22, focus.z + (Math.random() - 0.5) * 30);
+    }
+    physics.step(dt);
+    crateInstances.sync(physics.crates);
   }
-  physics.step(dt);
 
   carInstances.sync();
   pedInstances.sync();
-  crateInstances.sync(physics.crates);
 
   frames++; acc += dt;
   if (acc >= 0.5) { fps = Math.round(frames / acc); frames = 0; acc = 0; }
