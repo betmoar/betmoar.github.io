@@ -199,8 +199,14 @@ const INVARIANTS = {
 function checkInSync() {
   console.log('\nSync check (game inline vs world.mjs):');
   let html;
-  try { html = readFileSync(new URL('./sandbox-city.html', import.meta.url), 'utf8'); }
-  catch { report('read sandbox-city.html', false, 'file not found'); return; }
+  // The game file is index.html (historically sandbox-city.html); accept either.
+  const candidates = ['./index.html', './sandbox-city.html'];
+  let gameFile = null;
+  for (const c of candidates) {
+    try { html = readFileSync(new URL(c, import.meta.url), 'utf8'); gameFile = c; break; }
+    catch { /* try next */ }
+  }
+  if (gameFile == null) { report('read game file', false, `none of ${candidates.join(', ')} found`); return; }
   const wsrc = readFileSync(new URL('./world.mjs', import.meta.url), 'utf8');
   // Canonicalise: strip comments, then remove ALL whitespace. Two bodies that differ only
   // in formatting/comments collapse to the same string; a real logic change does not.
