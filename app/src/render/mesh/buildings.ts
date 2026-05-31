@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CHUNK, GRID_SP, buildingAt, valueNoise } from '../../world/world';
+import { CHUNK, GRID_SP, buildingAt, terrainHeight, valueNoise } from '../../world/world';
 import { selectKit, type KitHeights } from '../../world-render/place-buildings';
 import type { ZoneKits } from '../../assets/loaders';
 
@@ -60,16 +60,29 @@ export function buildBuildingsGeo(cx: number, cz: number, kits: ZoneKits): THREE
       const base = pal[(Math.abs(Math.round(lx) + Math.round(lz) * 3) % pal.length)];
       const kit = kits[B.zn];
 
+      // Seat the building on its HIGHEST footprint corner so no floor is buried, then drop a
+      // foundation skirt down past the LOWEST terrain around the footprint (sampled with a margin)
+      // so no edge floats over falling ground. baseY is where the building proper starts.
+      const baseY = B.highG;
+      let tMin = B.lowG;
+      const mx = B.hw + 2, mz = B.hd + 2;
+      for (let dx = -mx; dx <= mx + 1e-6; dx += mx) {
+        for (let dz = -mz; dz <= mz + 1e-6; dz += mz) tMin = Math.min(tMin, terrainHeight(lx + dx, lz + dz));
+      }
+      const footH = baseY - (tMin - 0.5);
+      const fcol: V3 = [base[0] * 0.55, base[1] * 0.55, base[2] * 0.58];
+      addBox(P, N, C, lx, baseY - footH / 2, lz, B.w + 0.6, footH, B.d + 0.6, fcol);
+
       if (kit) {
         const kh: KitHeights = { groundH: kit.ground.height, midHeights: kit.mids.map((m) => m.height), roofH: kit.roof.height };
-        for (const f of selectKit(lx, lz, B.lowG, B.hgt, kh)) {
+        for (const f of selectKit(lx, lz, baseY, B.hgt, kh)) {
           const geo = f.role === 'ground' ? kit.ground.geo : f.role === 'roof' ? kit.roof.geo : kit.mids[f.variant].geo;
           const col: V3 = f.role === 'roof' ? [base[0] * 0.7, base[1] * 0.7, base[2] * 0.7] : base;
           bakeModule(P, N, C, geo, lx, f.y, lz, B.w, B.d, col);
         }
       } else {
         const col: V3 = B.isLandmark ? [0.20, 0.24, 0.34] : base;
-        addBox(P, N, C, lx, B.lowG + B.hgt / 2, lz, B.w, B.hgt, B.d, col);
+        addBox(P, N, C, lx, baseY + B.hgt / 2, lz, B.w, B.hgt, B.d, col);
       }
       any = true;
     }

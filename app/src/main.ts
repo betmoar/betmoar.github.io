@@ -9,7 +9,7 @@ import { ChunkManager, type ChunkMaterials } from './world-render/chunk';
 import { loadAssets } from './assets/loaders';
 import { updateTraffic } from './sim/traffic';
 import { updatePeds } from './sim/peds';
-import { CarInstances, PedInstances, CrateInstances } from './render/instances';
+import { CarInstances, PedInstances } from './render/instances';
 import type { PhysicsWorld } from './physics/rapier';
 import { CameraController } from './core/controls';
 import { CHUNK, buildRoadNetwork, terrainHeight } from './world/world';
@@ -73,7 +73,6 @@ let pendingWalk = false;
 const post = createPost(renderer, scene, camera, tier);
 const carInstances = new CarInstances(scene, assets.vehicle);
 const pedInstances = new PedInstances(scene);
-const crateInstances = new CrateInstances(scene);
 
 function findStart(): { x: number; z: number } {
   for (let cx = 0; cx < 200; cx++) for (let cz = 0; cz < 200; cz++) {
@@ -103,7 +102,7 @@ addEventListener('resize', () => {
   post.setSize(window.innerWidth, window.innerHeight);
 });
 
-let frames = 0, fps = 0, acc = 0, tNow = 0, crateTimer = 0;
+let frames = 0, fps = 0, acc = 0, tNow = 0;
 const clock = new THREE.Clock();
 
 renderer.setAnimationLoop(() => {
@@ -119,16 +118,8 @@ renderer.setAnimationLoop(() => {
   updateTraffic(dt, focus.x, focus.z);
   updatePeds(dt, focus.x, focus.z);
 
-  // physics runs once Rapier has finished loading in the background
-  if (physics) {
-    crateTimer += dt;
-    if (crateTimer > 0.35) {
-      crateTimer = 0;
-      physics.spawnCrate(focus.x + (Math.random() - 0.5) * 30, terrainHeight(focus.x, focus.z) + 22, focus.z + (Math.random() - 0.5) * 30);
-    }
-    physics.step(dt);
-    crateInstances.sync(physics.crates);
-  }
+  // physics runs once Rapier has finished loading in the background (drives walk-mode collision)
+  if (physics) physics.step(dt);
 
   carInstances.sync();
   pedInstances.sync();
@@ -139,7 +130,7 @@ renderer.setAnimationLoop(() => {
   const modeHint = controls.mode === 'auto' ? 'click to explore'
     : controls.mode === 'fly' ? 'FLY: WASD+mouse · G=walk · Esc'
     : 'WALK: WASD+mouse · Space=jump · G=fly · Esc';
-  hud.textContent = `VOXEL CITY 2 — engine+physics  [${modeHint}]\ntier ${tier} · ${fps} fps · chunks ${chunks.count} (bldg ${chunks.buildingCount}) · cars ${carInstances.count} · peds ${pedInstances.count} · crates ${crateInstances.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''}`;
+  hud.textContent = `VOXEL CITY 2 — engine+physics  [${modeHint}]\ntier ${tier} · ${fps} fps · chunks ${chunks.count} (bldg ${chunks.buildingCount}) · cars ${carInstances.count} · peds ${pedInstances.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''}`;
 
   post.composer.render();
 });
