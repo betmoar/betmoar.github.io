@@ -1,15 +1,17 @@
 import * as THREE from 'three';
+import type { PhysicsWorld, Character } from '../physics/rapier';
 
-// Camera controller with two modes:
-//  • auto  — an ambient flythrough gliding over the city (default; also what the headless smoke
-//            test sees, and what plays when idle).
-//  • fly   — click to pointer-lock, then WASD + mouse-look free flight (Shift = sprint, Space/Ctrl
-//            up/down). Esc releases the lock and resumes the flythrough.
+// Camera controller with three modes:
+//  • auto  — ambient flythrough gliding over the city (default; idle + headless smoke test).
+//  • fly   — click to pointer-lock, WASD + mouse-look free flight (Shift sprint, Space/Ctrl up/down).
+//  • walk  — first-person Rapier capsule: gravity + collision against terrain/buildings, WASD
+//            relative to look, Space to jump. Press G (while locked) to toggle fly⇄walk; Esc → auto.
 // `focus` (ground-projected camera position) drives chunk streaming, crate spawning and the sun.
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const EYE = 0.7; // eye offset above the capsule centre
 
 export class CameraController {
-  mode: 'auto' | 'fly' = 'auto';
+  mode: 'auto' | 'fly' | 'walk' = 'auto';
   focus = new THREE.Vector3();
   private yaw: number;
   private pitch = -0.15;
@@ -17,18 +19,23 @@ export class CameraController {
   private keys = new Set<string>();
   private fwd = new THREE.Vector3();
   private strafe = new THREE.Vector3();
+  private physics: PhysicsWorld | null = null;
+  private walker: Character | null = null;
+  private vy = 0;
+  private grounded = false;
 
   constructor(private camera: THREE.PerspectiveCamera, canvas: HTMLCanvasElement, start: { x: number; z: number }) {
     this.focus.set(start.x, 0, start.z);
     this.yaw = this.heading;
-    addEventListener('keydown', (e) => this.keys.add(e.code));
+    addEventListener('keydown', (e) => {
+      this.keys.add(e.code);
+      if (e.code === 'KeyG' && document.pointerLockElement === canvas) this.toggleWalkFly();
+    });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
     canvas.addEventListener('click', () => { if (this.mode === 'auto') canvas.requestPointerLock(); });
     document.addEventListener('pointerlockchange', () => {
-      this.mode = document.pointerLockElement === canvas ? 'fly' : 'auto';
-      if (this.mode === 'fly') { // adopt the current view so there's no jump
-        this.yaw = this.heading;
-      }
+      if (document.pointerLockElement === canvas) { if (this.mode === 'auto') { this.mode = 'fly'; this.yaw = this.heading; } }
+      else this.mode = 'auto';
     });
     document.addEventListener('mousemove', (e) => {
       if (this.mode !== 'fly') return;
@@ -40,7 +47,44 @@ export class CameraController {
     camera.lookAt(start.x, 2, start.z);
   }
 
+  attachWalker(physics: PhysicsWorld, walker: Character): void { this.physics = physics; this.walker = walker; }
+
+  setMode(mode: 'auto' | 'fly' | 'walk'): void { if (mode !== 'walk' || this.walker) this.mode = mode; }
+
+  private toggleWalkFly(): void {
+    if (!this.walker || !this.physics) return;
+    if (this.mode === 'fly') {
+      // drop the capsule in beneath the current camera so walking starts where you were looking
+      const p = this.camera.position;
+      this.walker.body.setTranslation({ x: p.x, y: p.y, z: p.z }, true);
+      this.vy = 0; this.mode = 'walk';
+    } else if (this.mode === 'walk') {
+      this.mode = 'fly';
+    }
+  }
+
   update(dt: number): void {
+    if (this.mode === 'walk' && this.physics && this.walker) {
+      this.fwd.set(-Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), -Math.cos(this.yaw) * Math.cos(this.pitch));
+      const flatF = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+      this.strafe.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+      const sp = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') ? 11 : 5.5;
+      const move = new THREE.Vector3();
+      if (this.keys.has('KeyW')) move.addScaledVector(flatF, sp * dt);
+      if (this.keys.has('KeyS')) move.addScaledVector(flatF, -sp * dt);
+      if (this.keys.has('KeyA')) move.addScaledVector(this.strafe, -sp * dt);
+      if (this.keys.has('KeyD')) move.addScaledVector(this.strafe, sp * dt);
+      this.vy += -22 * dt;                                   // gravity
+      if (this.grounded && this.vy < 0) this.vy = -1;        // stick to ground
+      if (this.grounded && this.keys.has('Space')) this.vy = 9;
+      move.y = this.vy * dt;
+      this.grounded = this.physics.moveCharacter(this.walker, move);
+      const t = this.walker.body.translation();
+      this.camera.position.set(t.x, t.y + EYE, t.z);
+      this.camera.lookAt(t.x + this.fwd.x, t.y + EYE + this.fwd.y, t.z + this.fwd.z);
+      this.focus.set(t.x, 0, t.z);
+      return;
+    }
     if (this.mode === 'auto') {
       const speed = 16;
       this.focus.x += Math.cos(this.heading) * speed * dt;
