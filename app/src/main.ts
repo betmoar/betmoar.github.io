@@ -8,7 +8,8 @@ import { createWater } from './render/mesh/water';
 import { ChunkManager, type ChunkMaterials } from './world-render/chunk';
 import { loadZ1Kit } from './assets/loaders';
 import { updateTraffic } from './sim/traffic';
-import { CarInstances } from './render/instances';
+import { updatePeds } from './sim/peds';
+import { CarInstances, PedInstances } from './render/instances';
 import { CHUNK, buildRoadNetwork } from './world/world';
 
 // ── M4 (engine half) ────────────────────────────────────────────────────────────
@@ -26,7 +27,7 @@ renderer.toneMapping = THREE.NoToneMapping; // AgX moves into the post chain (af
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9fd3ff);
-scene.fog = new THREE.Fog(0x9fd3ff, CHUNK * cfg.drawRings * 0.7, CHUNK * cfg.drawRings * 1.5);
+scene.fog = new THREE.Fog(0x9fd3ff, CHUNK * cfg.drawRings * 0.95, CHUNK * cfg.drawRings * 1.7);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.5, CHUNK * (cfg.drawRings + 2));
 
@@ -63,6 +64,7 @@ const chunks = new ChunkManager(scene, mats, cfg.drawRings, kit);
 
 const post = createPost(renderer, scene, camera, tier);
 const carInstances = new CarInstances(scene);
+const pedInstances = new PedInstances(scene);
 
 function findStart(): { x: number; z: number } {
   for (let cx = 0; cx < 200; cx++) for (let cz = 0; cz < 200; cz++) {
@@ -100,12 +102,14 @@ renderer.setAnimationLoop(() => {
   dayNight.update(dt, focus.x, focus.z, camera);
   water.tick(tNow);
   updateTraffic(dt, focus.x, focus.z);
+  updatePeds(dt, focus.x, focus.z);
   carInstances.sync();
+  pedInstances.sync();
 
   frames++; acc += dt;
   if (acc >= 0.5) { fps = Math.round(frames / acc); frames = 0; acc = 0; }
   const tod = dayNight.timeOfDay.toFixed(2);
-  hud.textContent = `VOXEL CITY 2 — M5a traffic\ntier ${tier} · ${fps} fps · chunks ${chunks.count} · cars ${carInstances.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''}`;
+  hud.textContent = `VOXEL CITY 2 — M5b peds+traffic\ntier ${tier} · ${fps} fps · chunks ${chunks.count} · cars ${carInstances.count} · peds ${pedInstances.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''}`;
 
   post.composer.render();
 });

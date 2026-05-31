@@ -39,11 +39,11 @@ export class DayNight {
     this.sun.target.position.set(focusX, 0, focusZ);
     this.sun.target.updateMatrixWorld();
 
-    // intensities tuned for AgX tone mapping (higher than the old Lambert values)
-    this.sun.intensity = 0.25 + daylight * 3.0;
-    this.hemi.intensity = 0.25 + daylight * 0.8;
-    this.scene.environmentIntensity = 0.12 + daylight * 0.6;
-    this.isNight = daylight < 0.22;
+    // intensities tuned for AgX (lowered from the first pass — noon was washing out)
+    this.sun.intensity = 0.2 + daylight * 2.1;
+    this.hemi.intensity = 0.22 + daylight * 0.5;
+    this.scene.environmentIntensity = 0.1 + daylight * 0.4;
+    this.isNight = daylight < 0.18;
 
     // sky colour: night → day, warm dusk wash near the horizon crossing
     const dusk = Math.max(0, 1 - Math.abs(elev) * 4);
