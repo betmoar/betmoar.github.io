@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VOXEL CITY — Infinite 8-bit Hustle [v46]</title>
+<title>VOXEL CITY — Infinite 8-bit Hustle</title>
 <style>
   :root{ --accent:#ff4d6d; --accent2:#4dd2ff; --gold:#ffd23f; --green:#5dff9d; }
   *{margin:0;padding:0;box-sizing:border-box;image-rendering:pixelated}
@@ -57,7 +57,7 @@
 <canvas id="c"></canvas>
 <div id="cross"></div>
 <div id="hud">
-  <div id="title" class="panel">◢ VOXEL CITY <span style="opacity:.6;font-size:.8em">v46</span></div>
+  <div id="title" class="panel">◢ VOXEL CITY <span id="ver" style="opacity:.6;font-size:.8em"></span></div>
   <div id="cash" class="panel">CASH<span class="n">$0</span></div>
   <div id="rep" class="panel">RANK<span class="n" id="repv">Rookie · Lv1</span></div>
   <canvas id="minimap" width="150" height="150"></canvas>
@@ -87,8 +87,8 @@
 
 <script type="importmap">
 { "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  "three": "./vendor/three/three.module.js",
+  "three/addons/": "./vendor/three/addons/"
 }}
 </script>
 <script type="module">
@@ -96,9 +96,18 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+// Pure, deterministic world logic — single source of truth (also imported by the harness).
+import {
+  SEED, SEA_LEVEL, CHUNK, SEG, RADIUS, GRID_SP, ROAD_W, LANE, GRID_SP_T, HWY_EVERY, HWY_W, CROSS_EVERY, ROAD_WATER_MARGIN, TL_GREEN, TL_YELLOW, TL_HALF, TL_CYCLE, hash, smooth, valueNoise, rng, terrainRaw, citynessRaw, cityness, urbanCore, zone, blockLevel, terrainHeight, nearestLine, isHighwayLine, roadHalfWidth, crossStreetLine, onRoadTile, groundOrBridge, roadHere, buildRoadNetwork, tlOffset, tlState, isPark, buildingAt, buildingFootprintAt
+} from './world.mjs';
 
-const BUILD = 'v46';   // bump on each change; shown in title + HUD. Verify this matches.
-console.log('%cVOXEL CITY '+BUILD+' — crosswalk stripe clipping active', 'color:#7CFC9A;font-weight:bold');
+const BUILD = '0.2.0'; // SINGLE SOURCE OF TRUTH for the version (semver: MAJOR.MINOR.PATCH).
+                       // Bump here only — page <title> and HUD brand are populated at load.
+                       // MINOR for new features, PATCH for fixes, MAJOR for big reworks.
+const VERSION = 'v' + BUILD;
+document.title = 'VOXEL CITY — Infinite 8-bit Hustle [' + VERSION + ']';
+{ const verEl = document.getElementById('ver'); if (verEl) verEl.textContent = VERSION; }
+console.log('%cVOXEL CITY '+VERSION+' ready', 'color:#7CFC9A;font-weight:bold');
 
 // ============================================================================
 // RUNTIME SAFETY NET  (Phase 1)
@@ -250,73 +259,7 @@ function updateDayNight(dt){
 }
 let isNight=false;
 
-// ---------- Seeded noise ----------
-const SEED=1337;
-function hash(ix,iz){let h=(ix*374761393+iz*668265263+SEED*982451653)|0;h=(h^(h>>>13))*1274126177;h=h^(h>>>16);return((h>>>0)/4294967296);}
-function smooth(t){return t*t*(3-2*t);}
-function valueNoise(x,z){const x0=Math.floor(x),z0=Math.floor(z),fx=x-x0,fz=z-z0;
- const n00=hash(x0,z0),n10=hash(x0+1,z0),n01=hash(x0,z0+1),n11=hash(x0+1,z0+1);
- const u=smooth(fx),v=smooth(fz);
- const lerp=(a,b,t)=>a+(b-a)*t;
- return lerp(lerp(n00,n10,u),lerp(n01,n11,u),v);}
-// Sea level is 0. Terrain is biased upward so MOST of the world is dry land,
-// with water only in the lowest noise pockets (occasional lakes/rivers).
-const SEA_LEVEL=0;
-// Raw noise height (the underlying landscape, used by cityness).
-function terrainRaw(wx,wz){let h=0,amp=1,freq=0.006,sum=0;
- for(let o=0;o<4;o++){h+=valueNoise(wx*freq,wz*freq)*amp;sum+=amp;amp*=0.5;freq*=2.0;}
- h/=sum; // h in ~0..1
- return (Math.pow(h,1.3)-0.18)*44;}
-// City-ness uses RAW height (so it doesn't depend on the flattening below).
-function citynessRaw(wx,wz){
-  const region=valueNoise(wx*0.0009+100,wz*0.0009-100);
-  if(region<0.52) return 0;
-  const urban=(region-0.52)/0.48;
-  const h=terrainRaw(wx,wz);
-  const flat=1-Math.min(1,Math.abs(terrainRaw(wx+6,wz)-h)/6);
-  const low=1-Math.min(1,Math.max(0,h)/16);
-  return Math.max(0,Math.min(1,(flat*0.5+low*0.5)*urban));
-}
-function cityness(wx,wz){ return citynessRaw(wx,wz); }
-// Urban core intensity: how deep into a downtown we are (0 at city edge, 1 at the dense centre).
-// Uses the region noise peak so each city has a tall packed core that fades to suburbs.
-function urbanCore(wx,wz){
-  const region=valueNoise(wx*0.0009+100,wz*0.0009-100);
-  if(region<0.52) return 0;
-  // remap so core (region near 1.0) => 1, city edge (region~0.52) => 0, with a curve
-  const t=(region-0.52)/0.48;
-  return Math.pow(Math.max(0,Math.min(1,t)),1.6);  // bias toward only the peak being "core"
-}
-// Zone: 0=residential (outer), 1=commercial core (inner), 2=industrial (a separate noise pocket).
-function zone(wx,wz){
-  const core=urbanCore(wx,wz);
-  const ind=valueNoise(wx*0.0022-300,wz*0.0022+220);   // industrial pockets
-  if(ind>0.66 && core<0.55) return 2;                   // industrial: mid-density, not in the core
-  if(core>0.5) return 1;                                 // commercial downtown
-  return 0;                                              // residential
-}
-// Final terrain height: in city areas, flatten toward each GRID block's center height
-// so road corridors and blocks are level (no tearing, smooth driving). Blends out to
-// raw countryside terrain as cityness falls off.
-const GRID_SP_T=32;  // must match GRID_SP (defined later); kept local for height calc
-function blockLevel(wx,wz){
-  // bilinearly interpolate the raw height of the 4 surrounding grid intersections,
-  // so the leveled surface is smooth & continuous (no steps between blocks)
-  const gx0=Math.floor(wx/GRID_SP_T)*GRID_SP_T, gz0=Math.floor(wz/GRID_SP_T)*GRID_SP_T;
-  const gx1=gx0+GRID_SP_T, gz1=gz0+GRID_SP_T;
-  const tx=(wx-gx0)/GRID_SP_T, tz=(wz-gz0)/GRID_SP_T;
-  const h00=terrainRaw(gx0,gz0), h10=terrainRaw(gx1,gz0), h01=terrainRaw(gx0,gz1), h11=terrainRaw(gx1,gz1);
-  const a=h00*(1-tx)+h10*tx, b=h01*(1-tx)+h11*tx;
-  return a*(1-tz)+b*tz;
-}
-function terrainHeight(wx,wz){
-  const raw=terrainRaw(wx,wz);
-  const cn=citynessRaw(wx,wz);
-  if(cn<=0.12) return raw;                       // countryside: untouched
-  const level=blockLevel(wx,wz);
-  const k=Math.min(1,(cn-0.12)/0.4);             // flatten strength ramps with cityness
-  return raw*(1-k)+level*k;                       // blend toward flat block level
-}
+// (world logic imported from world.mjs — see import at top of module)
 function bandColor(h,wx,wz){
   let c;
   if(h<SEA_LEVEL)   c=[0.20,0.45,0.85]; // underwater
@@ -335,39 +278,12 @@ function bandColor(h,wx,wz){
   }
   return c;
 }
-function rng(cx,cz,salt){let a=(cx*73856093)^(cz*19349663)^(salt*83492791)^SEED;
-  return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
-
-// ---------- Chunk streaming ----------
-const CHUNK=48,SEG=24,RADIUS=4;
-
-// ---------- Global Manhattan road grid ----------
-// Roads run along world lines where (coord mod GRID_SP) is within ROAD_W of 0.
-const GRID_SP=32;      // spacing between road centerlines
-const ROAD_W=5;        // half-width of a road (so road is 10 units wide)
-const LANE=2.2;        // lane offset from centerline
-function nearestLine(v){ return Math.round(v/GRID_SP)*GRID_SP; }
-// Highways: every 5th grid line is a wide arterial. isHighwayLine(coord) true on those lines.
-const HWY_EVERY=6, HWY_W=9;
-const CROSS_EVERY=3;
-function isHighwayLine(lineCoord){ return ((Math.round(lineCoord/GRID_SP)%HWY_EVERY)+HWY_EVERY)%HWY_EVERY===0; }
-function roadHalfWidth(lineCoord){ return isHighwayLine(lineCoord)?HWY_W:ROAD_W; }
-// Cross-streets (horizontal roads) are sparse: only every CROSS_EVERY line + highways.
-function crossStreetLine(c){ if(isHighwayLine(c)) return true; return ((Math.round(c/GRID_SP)%CROSS_EVERY)+CROSS_EVERY)%CROSS_EVERY===0; }
+// (world logic imported from world.mjs — see import at top of module)
 function onRoad(wx,wz){
   const lx=nearestLine(wx), lz=nearestLine(wz);
   return Math.abs(wx-lx)<=roadHalfWidth(lx) || (crossStreetLine(lz)&&Math.abs(wz-lz)<=roadHalfWidth(lz));
 }
-function onRoadTile(wx,wz){ // stricter: used to forbid buildings, with margin
-  const lx=nearestLine(wx), lz=nearestLine(wz);
-  const onV=Math.abs(wx-lx)<=roadHalfWidth(lx)+2;
-  const onH=crossStreetLine(lz)&&Math.abs(wz-lz)<=roadHalfWidth(lz)+2;
-  return onV||onH;
-}
-// Effective walking/driving height: terrain, clamped to sea level over water.
-function groundOrBridge(wx,wz){
-  return Math.max(terrainHeight(wx,wz),SEA_LEVEL);
-}
+// (world logic imported from world.mjs — see import at top of module)
 
 const terrainMat=new THREE.MeshLambertMaterial({vertexColors:true,flatShading:true});
 const waterMat=new THREE.MeshLambertMaterial({color:0x2f72d6,transparent:true,opacity:0.7});
@@ -387,66 +303,12 @@ function buildTerrainGeo(ox,oz){
     colors.push(c[0],c[1],c[2]);}
   g.setAttribute('color',new THREE.Float32BufferAttribute(colors,3)); g.computeVertexNormals(); return g;
 }
-// ============================================================================
-// ROAD NETWORK AS DATA — single source of truth, then render from it.
-// buildRoadNetwork() returns validated {segments, intersections}; nothing is
-// emitted that isn't in the model, so markings/crosswalks can't escape onto
-// water or grass. roadHere() is THE predicate both layout and physics use.
-// ============================================================================
-const ROAD_WATER_MARGIN = 1.5; // keep roads this far back from the shoreline
-// THE single road predicate: is there drivable road surface at world (wx,wz)?
-function roadHere(wx,wz){
-  const lx=nearestLine(wx), lz=nearestLine(wz);
-  const onV = Math.abs(wx-lx)<=roadHalfWidth(lx);                       // avenue (every line)
-  const onH = crossStreetLine(lz) && Math.abs(wz-lz)<=roadHalfWidth(lz); // cross-street (sparse)
-  if(!onV && !onH) return false;
-  if(terrainHeight(wx,wz) < SEA_LEVEL + ROAD_WATER_MARGIN) return false; // not over/near water
-  // tie to developed blocks: the road line must border an urban block
-  if(onV){ const a=cityness(lx-GRID_SP/2,wz), b=cityness(lx+GRID_SP/2,wz); if(Math.max(a,b)>=0.3) return true; }
-  if(onH){ const a=cityness(wx,lz-GRID_SP/2), b=cityness(wx,lz+GRID_SP/2); if(Math.max(a,b)>=0.3) return true; }
-  return false;
-}
-// Build the validated road model for a chunk: a list of short road segments along
-// grid lines (only where roadHere holds), and intersections where two roads cross.
-function buildRoadNetwork(cx,cz){
-  const ox=cx*CHUNK, oz=cz*CHUNK, STEP=2;
-  const segments=[], intersections=[];
-  // vertical segments (constant x)
-  for(let lineX=Math.round((ox-CHUNK/2)/GRID_SP)*GRID_SP-GRID_SP; lineX<=ox+CHUNK/2+GRID_SP; lineX+=GRID_SP){
-    if(lineX<ox-CHUNK/2-0.01||lineX>=ox+CHUNK/2-0.01) continue;
-    const HW=roadHalfWidth(lineX), type=HW>ROAD_W?'hwy':'st';
-    for(let z=oz-CHUNK/2; z<oz+CHUNK/2; z+=STEP){
-      const zc=z+STEP/2;
-      if(!roadHere(lineX,zc)) continue;       // single predicate decides everything
-      segments.push({x:lineX, z, z2:z+STEP, vertical:true, hw:HW, type});
-    }
-  }
-  // horizontal segments (constant z)
-  for(let lineZ=Math.round((oz-CHUNK/2)/GRID_SP)*GRID_SP-GRID_SP; lineZ<=oz+CHUNK/2+GRID_SP; lineZ+=GRID_SP){
-    if(lineZ<oz-CHUNK/2-0.01||lineZ>=oz+CHUNK/2-0.01) continue;
-    const HW=roadHalfWidth(lineZ), type=HW>ROAD_W?'hwy':'st';
-    for(let x=ox-CHUNK/2; x<ox+CHUNK/2; x+=STEP){
-      const xc=x+STEP/2;
-      if(!roadHere(xc,lineZ)) continue;
-      segments.push({x, x2:x+STEP, z:lineZ, vertical:false, hw:HW, type});
-    }
-  }
-  // intersections: grid crossing where BOTH a vertical and horizontal road exist at the junction
-  const gx0=Math.floor((ox-CHUNK/2)/GRID_SP)*GRID_SP, gx1=Math.ceil((ox+CHUNK/2)/GRID_SP)*GRID_SP;
-  const gz0=Math.floor((oz-CHUNK/2)/GRID_SP)*GRID_SP, gz1=Math.ceil((oz+CHUNK/2)/GRID_SP)*GRID_SP;
-  for(let lineX=gx0; lineX<=gx1; lineX+=GRID_SP){
-    for(let lineZ=gz0; lineZ<=gz1; lineZ+=GRID_SP){
-      // require road on BOTH lines AT the junction, and the junction itself on land
-      if(!roadHere(lineX,lineZ)) continue;
-      // verify it's a genuine crossing: road continues along both axes through here
-      const vOK = roadHere(lineX,lineZ-GRID_SP/2)||roadHere(lineX,lineZ+GRID_SP/2);
-      const hOK = roadHere(lineX-GRID_SP/2,lineZ)||roadHere(lineX+GRID_SP/2,lineZ);
-      if(!(vOK&&hOK)) continue;
-      const light = isHighwayLine(lineX) && isHighwayLine(lineZ); // major junctions only
-      intersections.push({x:lineX, z:lineZ, hwx:roadHalfWidth(lineX), hwz:roadHalfWidth(lineZ), light});
-    }
-  }
-  return {segments, intersections};
+// (world logic imported from world.mjs — see import at top of module)
+// Nearest highway grid line strictly ahead of v in travel direction dir (highway lines sit at
+// multiples of GRID_SP*HWY_EVERY). Used to find the junction a car is approaching.
+function nextHighwayLine(v, dir) {
+  const HSP = GRID_SP * HWY_EVERY;
+  return dir > 0 ? Math.ceil((v + 0.001) / HSP) * HSP : Math.floor((v - 0.001) / HSP) * HSP;
 }
 // High-res road surface mesh for a chunk: RENDERS the validated network model.
 // No geometric decisions here — every element comes from buildRoadNetwork.
@@ -550,6 +412,35 @@ function buildRoadGeo(cx,cz){
       const col=(band++%2===0)?woodA:woodB;
       quad(lx-half, lx+half, pz, Math.min(pz+1.4,lz+half), O_DECK, col);
     }
+    // --- boardwalk detail: perimeter railing (posts + top rail), corner lamps, benches ---
+    const railWood=[0.40,0.29,0.18], rail=O_DECK, postTop=O_DECK+1.0, rt=0.06;
+    // posts every ~2.2 units along all four edges
+    for(let t=-half; t<=half+1e-6; t+=2.2){
+      const c=Math.min(t,half);
+      boxXYZ(lx+c-rt, lx+c+rt, rail, postTop, lz-half-rt, lz-half+rt, railWood); // south edge
+      boxXYZ(lx+c-rt, lx+c+rt, rail, postTop, lz+half-rt, lz+half+rt, railWood); // north edge
+      boxXYZ(lx-half-rt, lx-half+rt, rail, postTop, lz+c-rt, lz+c+rt, railWood); // west edge
+      boxXYZ(lx+half-rt, lx+half+rt, rail, postTop, lz+c-rt, lz+c+rt, railWood); // east edge
+    }
+    // continuous top rail along each edge
+    const rh=postTop-0.12;
+    boxXYZ(lx-half-rt, lx+half+rt, rh, postTop, lz-half-rt, lz-half+rt, railWood);
+    boxXYZ(lx-half-rt, lx+half+rt, rh, postTop, lz+half-rt, lz+half+rt, railWood);
+    boxXYZ(lx-half-rt, lx-half+rt, rh, postTop, lz-half-rt, lz+half+rt, railWood);
+    boxXYZ(lx+half-rt, lx+half+rt, rh, postTop, lz-half-rt, lz+half+rt, railWood);
+    // a lamp at two opposite corners: dark post + bright (bloom-feeding) head
+    const lampPost=[0.12,0.12,0.14], lampGlow=[1.7,1.5,0.7];
+    for(const s of [-1,1]){
+      const cx2=lx+s*(half-0.6), cz2=lz+s*(half-0.6);
+      boxXYZ(cx2-0.07,cx2+0.07, O_DECK, O_DECK+2.0, cz2-0.07,cz2+0.07, lampPost);
+      boxXYZ(cx2-0.22,cx2+0.22, O_DECK+2.0, O_DECK+2.4, cz2-0.22,cz2+0.22, lampGlow);
+    }
+    // a bench near the centre, oriented along X (seat + two legs)
+    const benchW=[0.45,0.33,0.21];
+    boxXYZ(lx-2.0, lx+2.0, O_DECK+0.45, O_DECK+0.6, lz-0.25, lz+0.25, benchW);     // seat
+    boxXYZ(lx-1.9, lx-1.6, O_DECK, O_DECK+0.45, lz-0.22, lz+0.22, benchW);          // leg
+    boxXYZ(lx+1.6, lx+1.9, O_DECK, O_DECK+0.45, lz-0.22, lz+0.22, benchW);          // leg
+    boxXYZ(lx-2.0, lx+2.0, O_DECK+0.6, O_DECK+1.05, lz+0.18, lz+0.25, benchW);      // backrest
   }
   if(!any) return null;
   const g=new THREE.BufferGeometry();
@@ -655,59 +546,7 @@ function buildBuildingsGeo(cx,cz){
   g.setAttribute('color',new THREE.Float32BufferAttribute(colors,3));
   return g;
 }
-// ~1 in 6 city blocks is a park (trees, no building). Deterministic per block.
-function isPark(blockX,blockZ){
-  const pr=rng(Math.round(blockX),Math.round(blockZ),23);
-  return cityness(blockX,blockZ)>0.2 && pr()<0.16;
-}
-// ============================================================================
-// SINGLE SOURCE OF TRUTH for building placement (Phase 2).
-// Given a block-centre (lx,lz), returns null (no building) or the full spec.
-// BOTH the geometry builder and collision call this — the RNG call sequence
-// (density, w, d, colour-index) lives in exactly one place, so collision can
-// never disagree with what's drawn. `rngState` is returned so the geometry
-// builder can continue the SAME rng for roof features without re-seeding.
-// ============================================================================
-function buildingAt(lx,lz){
-  if(onRoadTile(lx,lz)) return null;          // never on a road
-  if(isPark(lx,lz)) return null;              // park block: no building
-  const cn=cityness(lx,lz);
-  const core=urbanCore(lx,lz);
-  const zn=zone(lx,lz);
-  const br=rng(Math.round(lx),Math.round(lz),11); // per-block deterministic rng
-  const density = zn===1 ? Math.min(1,0.55+core*0.5)
-                : zn===2 ? 0.6
-                : Math.min(0.75,cn*0.7+0.15);
-  if(br()>density) return null;               // rng call #1: density gate
-  const room=GRID_SP-2*ROAD_W-3;
-  const fillBase = zn===0 ? 0.45 : zn===2 ? 0.7 : 0.6;
-  const w=Math.max(4,room*(fillBase+br()*0.35)); // rng call #2
-  const d=Math.max(4,room*(fillBase+br()*0.35)); // rng call #3
-  const hw=w/2, hd=d/2;
-  const c1=terrainHeight(lx-hw,lz-hd), c2=terrainHeight(lx+hw,lz-hd),
-        c3=terrainHeight(lx-hw,lz+hd), c4=terrainHeight(lx+hw,lz+hd);
-  const lowG=Math.min(c1,c2,c3,c4), highG=Math.max(c1,c2,c3,c4);
-  if(lowG<SEA_LEVEL+0.5) return null;         // underwater corner
-  if(highG-lowG>6) return null;               // too steep
-  const lr=rng(Math.round(lx),Math.round(lz),41);
-  const isLandmark = core>0.78 && lr()<0.10;
-  let hgt;
-  if(isLandmark) hgt = 80+lr()*60;
-  else if(zn===1) hgt = 12 + core*core*70 + br()*14;   // rng call #4 (commercial only)
-  else if(zn===2) hgt = 7 + br()*8;                     // rng call #4 (industrial)
-  else            hgt = 6 + br()*(6+core*10);           // rng call #4 (residential)
-  return { lx, lz, w, d, hw, hd, lowG, highG, isLandmark, hgt, zn, core, br };
-}
-// Returns true if world point (x,z) falls inside a building's footprint.
-// Uses buildingAt() — the SAME spec the geometry is built from — so collision
-// and visuals can never disagree.
-function buildingFootprintAt(x,z){
-  const bx=Math.round((x-GRID_SP/2)/GRID_SP)*GRID_SP+GRID_SP/2;
-  const bz=Math.round((z-GRID_SP/2)/GRID_SP)*GRID_SP+GRID_SP/2;
-  const B=buildingAt(bx,bz);
-  if(!B) return false;
-  return Math.abs(x-bx)<B.hw+1 && Math.abs(z-bz)<B.hd+1;
-}
+// (world logic imported from world.mjs — see import at top of module)
 function addBox(P,N,C,cx,cy,cz,w,h,d,col){
   const x=w/2,y=h/2,z=d/2;
   const v=[[-x,-y,-z],[x,-y,-z],[x,y,-z],[-x,y,-z],[-x,-y,z],[x,-y,z],[x,y,z],[-x,y,z]];
@@ -828,13 +667,19 @@ const tlightPoleInst=new THREE.InstancedMesh(new THREE.CylinderGeometry(0.15,0.1
   new THREE.MeshLambertMaterial({color:0x1c1c20}),MAX_TLIGHT); tlightPoleInst.frustumCulled=false; scene.add(tlightPoleInst);
 const tlightHeadInst=new THREE.InstancedMesh(new THREE.BoxGeometry(0.5,1.4,0.5),
   new THREE.MeshLambertMaterial({color:0x111114}),MAX_TLIGHT); tlightHeadInst.frustumCulled=false; scene.add(tlightHeadInst);
+// Two lamp faces per junction (one per travel axis), coloured per-instance each frame, so the
+// lamp pool is twice the junction pool. Basic (unlit) material so the lamp always reads as "lit"
+// and its instance colour shows directly; bright colours still feed bloom.
 const tlightLampInst=new THREE.InstancedMesh(new THREE.BoxGeometry(0.38,0.38,0.3),
-  new THREE.MeshLambertMaterial({color:0xff3322,emissive:0xff2200,emissiveIntensity:2.2}),MAX_TLIGHT);
+  new THREE.MeshBasicMaterial({color:0xffffff}),MAX_TLIGHT*2);
 tlightLampInst.frustumCulled=false; scene.add(tlightLampInst);
+// signal lamp colours and the flat per-frame list (instance order matches rebuildProps)
+const TL_COL=[new THREE.Color(0x2bff44), new THREE.Color(0xffcc22), new THREE.Color(0xff2200)]; // green/yellow/red
+const tlightList=[];
 layerMats.roads.push(tlightPoleInst.material, tlightHeadInst.material, tlightLampInst.material);
 // Rebuild all static prop instances from currently-loaded chunks.
 function rebuildProps(){
-  let li=0,ti=0,gi=0;
+  let li=0,ti=0,gi=0,lpi=0;
   for(const c of chunks.values()){
     for(const L of (c.lamps||[])){ if(li>=MAX_LAMP)break;
       _p.set(L.x,L.y+2.5,L.z); _m.compose(_p,_q0,_s); lampPoleInst.setMatrixAt(li,_m);
@@ -845,11 +690,16 @@ function rebuildProps(){
       foliageInst.setColorAt(ti,foliageColors[T.c]); ti++; }
     for(const G of (c.tlights||[])){ if(gi>=MAX_TLIGHT)break;
       _p.set(G.x,G.y+3,G.z); _m.compose(_p,_q0,_s); tlightPoleInst.setMatrixAt(gi,_m);
-      _p.set(G.x,G.y+5.4,G.z); _m.compose(_p,_q0,_s); tlightHeadInst.setMatrixAt(gi,_m);
-      _p.set(G.x,G.y+5.8,G.z+0.2); _m.compose(_p,_q0,_s); tlightLampInst.setMatrixAt(gi,_m); gi++; }
+      _p.set(G.x,G.y+5.4,G.z); _m.compose(_p,_q0,_s); tlightHeadInst.setMatrixAt(gi,_m); gi++;
+      // two lamp faces: axis 0 (E-W, faces +Z) above, axis 1 (N-S, faces +X) below
+      _p.set(G.x,G.y+5.95,G.z+0.27); _m.compose(_p,_q0,_s); tlightLampInst.setMatrixAt(lpi,_m);
+      tlightList[lpi]={axis:0,ix:G.ix,iz:G.iz}; lpi++;
+      _p.set(G.x+0.27,G.y+5.55,G.z); _m.compose(_p,_q0,_s); tlightLampInst.setMatrixAt(lpi,_m);
+      tlightList[lpi]={axis:1,ix:G.ix,iz:G.iz}; lpi++; }
   }
+  tlightList.length=lpi;
   lampPoleInst.count=li; lampHeadInst.count=li; trunkInst.count=ti; foliageInst.count=ti;
-  tlightPoleInst.count=gi; tlightHeadInst.count=gi; tlightLampInst.count=gi;
+  tlightPoleInst.count=gi; tlightHeadInst.count=gi; tlightLampInst.count=lpi;
   tlightPoleInst.instanceMatrix.needsUpdate=true; tlightHeadInst.instanceMatrix.needsUpdate=true; tlightLampInst.instanceMatrix.needsUpdate=true;
   lampPoleInst.instanceMatrix.needsUpdate=true; lampHeadInst.instanceMatrix.needsUpdate=true;
   trunkInst.instanceMatrix.needsUpdate=true; foliageInst.instanceMatrix.needsUpdate=true;
@@ -960,7 +810,7 @@ function buildChunk(cx,cz){
     for(const it of net.intersections){ if(!it.light) continue;
       // place the signal on a corner of the junction, on the ground
       const sx=it.x+it.hwx+1.0, sz=it.z+it.hwz+1.0;
-      tlights.push({x:sx, z:sz, y:Math.max(terrainHeight(sx,sz),SEA_LEVEL)}); } }
+      tlights.push({x:sx, z:sz, y:Math.max(terrainHeight(sx,sz),SEA_LEVEL), ix:it.x, iz:it.z}); } }
   chunks.set(cx+','+cz,{tmesh,roadMesh,water,bmesh,peds,traffic,job,lamps,trees,tlights});
   if(DEBUG) applyRenderState();   // new chunk inherits current layer/wireframe/normals state
 }
@@ -1365,7 +1215,10 @@ function radioCarState(inCar){
 }
 
 const lock=document.getElementById('lock');
-lock.addEventListener('click',()=>renderer.domElement.requestPointerLock());
+// Pointer Lock API is absent on most mobile browsers (iOS Safari etc.) — feature-detect
+// so the tap doesn't throw, and just dismiss the overlay there (no mouse-look on touch).
+const hasPointerLock = typeof renderer.domElement.requestPointerLock === 'function';
+lock.addEventListener('click',()=>{ if(hasPointerLock) renderer.domElement.requestPointerLock(); else lock.style.display='none'; });
 document.addEventListener('pointerlockchange',()=>{lock.style.display=document.pointerLockElement===renderer.domElement?'none':'flex';});
 addEventListener('mousemove',e=>{if(document.pointerLockElement!==renderer.domElement||player.inCar)return;
   player.yaw-=e.movementX*0.0022; player.pitch=Math.max(-1.2,Math.min(1.2,player.pitch-e.movementY*0.0022));});
@@ -1549,6 +1402,10 @@ function tickInner(){
     return; // skip all world simulation while frozen
   } else freeCam.inited=false;
   tNow+=dt;
+  // animate traffic-signal lamps: recolour each lamp face from its axis' current state
+  for(let i=0;i<tlightList.length;i++){ const L=tlightList[i];
+    tlightLampInst.setColorAt(i, TL_COL[tlState(L.axis,L.ix,L.iz,tNow)]); }
+  if(tlightList.length && tlightLampInst.instanceColor) tlightLampInst.instanceColor.needsUpdate=true;
   updateDayNight(dt);
   updateParticles(dt);
   fpsN++;fpsT+=dt; if(fpsT>=0.5){fps=Math.round(fpsN/fpsT);fpsN=0;fpsT=0;}
@@ -1655,7 +1512,22 @@ function tickInner(){
     }
     for(const t of c.traffic){
       const oxt=t.x, ozt=t.z;
-      if(t.axis===0) t.x+=t.dir*t.spd*dt; else t.z+=t.dir*t.spd*dt;
+      // traffic-signal gating: hold at the stop line on yellow/red before a lit junction
+      let stop=false;
+      const cross=nearestLine(t.axis===0 ? t.z : t.x);   // the road line the car drives along
+      if(isHighwayLine(cross)){
+        const moving=t.axis===0 ? t.x : t.z;
+        const ahead=nextHighwayLine(moving,t.dir);        // junction centre on the moving axis
+        const ix=t.axis===0?ahead:cross, iz=t.axis===0?cross:ahead;
+        if(tlState(t.axis,ix,iz,tNow)!==0){               // not green
+          const stopLine=ahead - t.dir*(HWY_W+1.6);
+          const dist=(stopLine-moving)*t.dir;             // >0: stop line still ahead
+          if(dist>=-0.5 && dist<8){                       // within the approach zone (let cars in the box clear)
+            if(t.axis===0) t.x=stopLine; else t.z=stopLine; stop=true;
+          }
+        }
+      }
+      if(!stop){ if(t.axis===0) t.x+=t.dir*t.spd*dt; else t.z+=t.dir*t.spd*dt; }
       if(t.axis===0) t.z=nearestLine(t.z)+t.dir*LANE; else t.x=nearestLine(t.x)+t.dir*LANE;
       // water ahead: revert and reverse
       if(terrainHeight(t.x,t.z)<SEA_LEVEL+0.3){ t.x=oxt; t.z=ozt; t.dir=-t.dir; t.turnedAt=null; }
