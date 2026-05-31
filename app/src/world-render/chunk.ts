@@ -5,6 +5,7 @@ import { buildRoadGeo } from '../render/mesh/roads';
 import { buildBuildingsGeo } from '../render/mesh/buildings';
 import { buildWaterGeo } from '../render/mesh/water';
 import type { ZoneKits } from '../assets/loaders';
+import type { PhysicsWorld } from '../physics/rapier';
 
 interface LoadedChunk {
   cx: number; cz: number;
@@ -29,7 +30,7 @@ export class ChunkManager {
   private lastKey = '';
   buildingCount = 0;
 
-  constructor(private scene: THREE.Scene, private mats: ChunkMaterials, private rings: number, private buildingRings: number, private kits: ZoneKits) {}
+  constructor(private scene: THREE.Scene, private mats: ChunkMaterials, private rings: number, private buildingRings: number, private kits: ZoneKits, private physics: PhysicsWorld | null = null) {}
 
   get count(): number { return this.loaded.size; }
 
@@ -49,12 +50,16 @@ export class ChunkManager {
     }
     for (const k of [...this.loaded.keys()]) if (!want.has(k)) this.unload(k);
 
-    // reconcile the building LOD layer against the new focus
+    // reconcile the building LOD layer + physics colliders against the new focus (both inner-ring)
     let bc = 0;
     for (const c of this.loaded.values()) {
       const inner = Math.max(Math.abs(c.cx - ccx), Math.abs(c.cz - ccz)) <= this.buildingRings;
       if (inner && !c.building) this.addBuildings(c);
       else if (!inner && c.building) this.removeBuildings(c);
+      if (this.physics) {
+        if (inner && !this.physics.hasChunk(c.cx, c.cz)) this.physics.addChunk(c.cx, c.cz);
+        else if (!inner && this.physics.hasChunk(c.cx, c.cz)) this.physics.removeChunk(c.cx, c.cz);
+      }
       if (c.building) bc++;
     }
     this.buildingCount = bc;
@@ -103,6 +108,7 @@ export class ChunkManager {
     this.scene.remove(c.group);
     for (const g of c.baseGeos) g.dispose();
     if (c.building) c.building.geo.dispose();
+    if (this.physics) this.physics.removeChunk(c.cx, c.cz);
     this.loaded.delete(key);
   }
 }

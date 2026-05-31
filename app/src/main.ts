@@ -9,8 +9,9 @@ import { ChunkManager, type ChunkMaterials } from './world-render/chunk';
 import { loadAssets } from './assets/loaders';
 import { updateTraffic } from './sim/traffic';
 import { updatePeds } from './sim/peds';
-import { CarInstances, PedInstances } from './render/instances';
-import { CHUNK, buildRoadNetwork } from './world/world';
+import { CarInstances, PedInstances, CrateInstances } from './render/instances';
+import { PhysicsWorld } from './physics/rapier';
+import { CHUNK, buildRoadNetwork, terrainHeight } from './world/world';
 
 // ── M4 (engine half) ────────────────────────────────────────────────────────────
 // Day/night sun + sky + IBL cycle, pmndrs post stack (SMAA + tier-gated bloom + AgX), and animated
@@ -60,12 +61,14 @@ const mats: ChunkMaterials = {
 };
 
 const assets = await loadAssets(import.meta.env.BASE_URL);
-const buildingRings = Math.max(1, cfg.drawRings - 1); // buildings within an inner ring (LOD/HLOD-lite)
-const chunks = new ChunkManager(scene, mats, cfg.drawRings, buildingRings, assets.kits);
+const physics = await PhysicsWorld.create();
+const buildingRings = Math.max(1, cfg.drawRings - 1); // buildings + physics within an inner ring
+const chunks = new ChunkManager(scene, mats, cfg.drawRings, buildingRings, assets.kits, physics);
 
 const post = createPost(renderer, scene, camera, tier);
 const carInstances = new CarInstances(scene, assets.vehicle);
 const pedInstances = new PedInstances(scene);
+const crateInstances = new CrateInstances(scene);
 
 function findStart(): { x: number; z: number } {
   for (let cx = 0; cx < 200; cx++) for (let cz = 0; cz < 200; cz++) {
@@ -84,7 +87,7 @@ addEventListener('resize', () => {
   post.setSize(window.innerWidth, window.innerHeight);
 });
 
-let frames = 0, fps = 0, acc = 0, tNow = 0;
+let frames = 0, fps = 0, acc = 0, tNow = 0, crateTimer = 0;
 const clock = new THREE.Clock();
 
 renderer.setAnimationLoop(() => {
@@ -104,13 +107,23 @@ renderer.setAnimationLoop(() => {
   water.tick(tNow);
   updateTraffic(dt, focus.x, focus.z);
   updatePeds(dt, focus.x, focus.z);
+
+  // rain a few physics crates near the focus so the Rapier world is visibly working
+  crateTimer += dt;
+  if (crateTimer > 0.35) {
+    crateTimer = 0;
+    physics.spawnCrate(focus.x + (Math.random() - 0.5) * 30, terrainHeight(focus.x, focus.z) + 22, focus.z + (Math.random() - 0.5) * 30);
+  }
+  physics.step(dt);
+
   carInstances.sync();
   pedInstances.sync();
+  crateInstances.sync(physics.crates);
 
   frames++; acc += dt;
   if (acc >= 0.5) { fps = Math.round(frames / acc); frames = 0; acc = 0; }
   const tod = dayNight.timeOfDay.toFixed(2);
-  hud.textContent = `VOXEL CITY 2 — engine\ntier ${tier} · ${fps} fps · chunks ${chunks.count} (bldg ${chunks.buildingCount}) · cars ${carInstances.count} · peds ${pedInstances.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''}`;
+  hud.textContent = `VOXEL CITY 2 — engine+physics\ntier ${tier} · ${fps} fps · chunks ${chunks.count} (bldg ${chunks.buildingCount}) · cars ${carInstances.count} · peds ${pedInstances.count} · crates ${crateInstances.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''}`;
 
   post.composer.render();
 });
