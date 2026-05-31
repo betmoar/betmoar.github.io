@@ -97,7 +97,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-const BUILD = 'v48';   // SINGLE SOURCE OF TRUTH for the version. Bump here only — the
+const BUILD = 'v49';   // SINGLE SOURCE OF TRUTH for the version. Bump here only — the
                        // page <title> and HUD brand are populated from this at load.
 document.title = 'VOXEL CITY — Infinite 8-bit Hustle [' + BUILD + ']';
 { const verEl = document.getElementById('ver'); if (verEl) verEl.textContent = BUILD; }
@@ -580,6 +580,35 @@ function buildRoadGeo(cx,cz){
       const col=(band++%2===0)?woodA:woodB;
       quad(lx-half, lx+half, pz, Math.min(pz+1.4,lz+half), O_DECK, col);
     }
+    // --- boardwalk detail: perimeter railing (posts + top rail), corner lamps, benches ---
+    const railWood=[0.40,0.29,0.18], rail=O_DECK, postTop=O_DECK+1.0, rt=0.06;
+    // posts every ~2.2 units along all four edges
+    for(let t=-half; t<=half+1e-6; t+=2.2){
+      const c=Math.min(t,half);
+      boxXYZ(lx+c-rt, lx+c+rt, rail, postTop, lz-half-rt, lz-half+rt, railWood); // south edge
+      boxXYZ(lx+c-rt, lx+c+rt, rail, postTop, lz+half-rt, lz+half+rt, railWood); // north edge
+      boxXYZ(lx-half-rt, lx-half+rt, rail, postTop, lz+c-rt, lz+c+rt, railWood); // west edge
+      boxXYZ(lx+half-rt, lx+half+rt, rail, postTop, lz+c-rt, lz+c+rt, railWood); // east edge
+    }
+    // continuous top rail along each edge
+    const rh=postTop-0.12;
+    boxXYZ(lx-half-rt, lx+half+rt, rh, postTop, lz-half-rt, lz-half+rt, railWood);
+    boxXYZ(lx-half-rt, lx+half+rt, rh, postTop, lz+half-rt, lz+half+rt, railWood);
+    boxXYZ(lx-half-rt, lx-half+rt, rh, postTop, lz-half-rt, lz+half+rt, railWood);
+    boxXYZ(lx+half-rt, lx+half+rt, rh, postTop, lz-half-rt, lz+half+rt, railWood);
+    // a lamp at two opposite corners: dark post + bright (bloom-feeding) head
+    const lampPost=[0.12,0.12,0.14], lampGlow=[1.7,1.5,0.7];
+    for(const s of [-1,1]){
+      const cx2=lx+s*(half-0.6), cz2=lz+s*(half-0.6);
+      boxXYZ(cx2-0.07,cx2+0.07, O_DECK, O_DECK+2.0, cz2-0.07,cz2+0.07, lampPost);
+      boxXYZ(cx2-0.22,cx2+0.22, O_DECK+2.0, O_DECK+2.4, cz2-0.22,cz2+0.22, lampGlow);
+    }
+    // a bench near the centre, oriented along X (seat + two legs)
+    const benchW=[0.45,0.33,0.21];
+    boxXYZ(lx-2.0, lx+2.0, O_DECK+0.45, O_DECK+0.6, lz-0.25, lz+0.25, benchW);     // seat
+    boxXYZ(lx-1.9, lx-1.6, O_DECK, O_DECK+0.45, lz-0.22, lz+0.22, benchW);          // leg
+    boxXYZ(lx+1.6, lx+1.9, O_DECK, O_DECK+0.45, lz-0.22, lz+0.22, benchW);          // leg
+    boxXYZ(lx-2.0, lx+2.0, O_DECK+0.6, O_DECK+1.05, lz+0.18, lz+0.25, benchW);      // backrest
   }
   if(!any) return null;
   const g=new THREE.BufferGeometry();
