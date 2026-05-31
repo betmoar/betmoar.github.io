@@ -7,6 +7,8 @@ import { DayNight } from './render/daynight';
 import { createWater } from './render/mesh/water';
 import { ChunkManager, type ChunkMaterials } from './world-render/chunk';
 import { loadZ1Kit } from './assets/loaders';
+import { updateTraffic } from './sim/traffic';
+import { CarInstances } from './render/instances';
 import { CHUNK, buildRoadNetwork } from './world/world';
 
 // ── M4 (engine half) ────────────────────────────────────────────────────────────
@@ -60,6 +62,7 @@ const kit = await loadZ1Kit(import.meta.env.BASE_URL);
 const chunks = new ChunkManager(scene, mats, cfg.drawRings, kit);
 
 const post = createPost(renderer, scene, camera, tier);
+const carInstances = new CarInstances(scene);
 
 function findStart(): { x: number; z: number } {
   for (let cx = 0; cx < 200; cx++) for (let cz = 0; cz < 200; cz++) {
@@ -96,11 +99,13 @@ renderer.setAnimationLoop(() => {
 
   dayNight.update(dt, focus.x, focus.z, camera);
   water.tick(tNow);
+  updateTraffic(dt, focus.x, focus.z);
+  carInstances.sync();
 
   frames++; acc += dt;
   if (acc >= 0.5) { fps = Math.round(frames / acc); frames = 0; acc = 0; }
   const tod = dayNight.timeOfDay.toFixed(2);
-  hud.textContent = `VOXEL CITY 2 — M4 engine\ntier ${tier} · ${fps} fps · chunks ${chunks.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''} · kit ${kit ? 'on' : 'box'}`;
+  hud.textContent = `VOXEL CITY 2 — M5a traffic\ntier ${tier} · ${fps} fps · chunks ${chunks.count} · cars ${carInstances.count} · tod ${tod} ${dayNight.isNight ? '(night)' : ''}`;
 
   post.composer.render();
 });
