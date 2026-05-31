@@ -28,11 +28,22 @@ export interface ChunkMaterials {
 export class ChunkManager {
   private loaded = new Map<string, LoadedChunk>();
   private lastKey = '';
+  private ccx = 0;
+  private ccz = 0;
   buildingCount = 0;
 
   constructor(private scene: THREE.Scene, private mats: ChunkMaterials, private rings: number, private buildingRings: number, private kits: ZoneKits, private physics: PhysicsWorld | null = null) {}
 
   get count(): number { return this.loaded.size; }
+
+  // Physics loads lazily (its WASM is large) — attach it once ready and backfill colliders for the
+  // inner-ring chunks already streamed in.
+  setPhysics(physics: PhysicsWorld): void {
+    this.physics = physics;
+    for (const c of this.loaded.values()) {
+      if (Math.max(Math.abs(c.cx - this.ccx), Math.abs(c.cz - this.ccz)) <= this.buildingRings) physics.addChunk(c.cx, c.cz);
+    }
+  }
 
   update(focusX: number, focusZ: number): void {
     const ccx = Math.round(focusX / CHUNK), ccz = Math.round(focusZ / CHUNK);
