@@ -101,7 +101,7 @@ import {
   SEED, SEA_LEVEL, CHUNK, SEG, RADIUS, GRID_SP, ROAD_W, LANE, GRID_SP_T, HWY_EVERY, HWY_W, CROSS_EVERY, ROAD_WATER_MARGIN, TL_GREEN, TL_YELLOW, TL_HALF, TL_CYCLE, hash, smooth, valueNoise, rng, terrainRaw, citynessRaw, cityness, urbanCore, zone, blockLevel, terrainHeight, nearestLine, isHighwayLine, roadHalfWidth, crossStreetLine, onRoadTile, groundOrBridge, roadHere, buildRoadNetwork, tlOffset, tlState, isPark, buildingAt, buildingFootprintAt
 } from './world.mjs';
 
-const BUILD = '0.2.4'; // SINGLE SOURCE OF TRUTH for the version (semver: MAJOR.MINOR.PATCH).
+const BUILD = '0.3.0'; // SINGLE SOURCE OF TRUTH for the version (semver: MAJOR.MINOR.PATCH).
                        // Bump here only — page <title> and HUD brand are populated at load.
                        // MINOR for new features, PATCH for fixes, MAJOR for big reworks.
 const VERSION = 'v' + BUILD;
@@ -181,6 +181,7 @@ function applyLayers(){
   lampPoleInst.visible=lampHeadInst.visible=trunkInst.visible=foliageInst.visible=L.props;
   tlightPoleInst.visible=tlightHeadInst.visible=tlightLampInst.visible=L.props;
   pedInst.visible=carBodyInst.visible=carCabInst.visible=policeBodyInst.visible=policeTopInst.visible=L.npcs;
+  carGlassInst.visible=carWheelInst.visible=L.npcs;
 }
 
 // ---------- GFX quality config (tweak these to trade visuals vs FPS) ----------
@@ -192,9 +193,25 @@ const GFX = {
   viewDist: 300,       // draw distance
   bloom: true,         // glow on neon/headlights/windows (post-processing, full-screen cost)
   bloomStrength: 0.9, bloomRadius: 0.6, bloomThreshold: 0.82,
+  // --- realism spikes (v0.3.0); all default-safe, see updateDayNight + skybox loader ---
+  scatterFog: true,    // tint fog toward the sun (warm dawn/dusk) for atmospheric depth
+  fogScatter: 0.55,    // 0 = flat fog (old look), 1 = strong sun-direction tint
+  skybox: false,       // use an equirect photo as background + reflection env (needs vendor/hdri file)
+  skyboxFile: 'city_downtown.jpg', // which panorama under vendor/hdri/ to load
+  skyboxExposure: 0.95,// ACES tone-mapping exposure when a skybox is active (tame bloom blowout)
+  // when a skybox is active, line the procedural sun up with the photo's baked lighting:
+  skyboxLockTime: true,  // freeze the day/night cycle so it can't drift to night under a daytime photo
+  skyboxTimeOfDay: 0.5,  // 0=midnight .25=sunrise .5=noon .75=sunset — match the panorama's brightness
+  skyboxSunAz: 0,        // extra horizontal sun rotation (degrees) to aim shadows at the photo's sun
+  // animated water surface (clean-room sum-of-sines waves injected into the water material):
+  waterWaves: true,    // false = flat water plane (old look)
+  waterSegments: 16,   // plane subdivisions per chunk for the wave displacement (cost vs smoothness)
+  waveAmp: 0.32,       // wave height in metres
+  waveSpeed: 0.7,      // wave animation speed
 };
 const VIEW=GFX.viewDist;
 const scene=new THREE.Scene();
+let skyboxActive=false; // true once an equirect panorama is installed as scene.background/environment
 let SKY=new THREE.Color(0x9fd3ff); scene.background=SKY.clone();
 scene.fog=new THREE.Fog(SKY.clone(),VIEW*0.45,VIEW*0.95);
 const camera=new THREE.PerspectiveCamera(68,innerWidth/innerHeight,0.5,VIEW*1.2);
@@ -228,6 +245,31 @@ if(GFX.bloom){
   composer.setSize(innerWidth,innerHeight);
 }
 
+// ---------- Optional equirectangular skybox + reflection environment ----------
+// Idea from webgl_materials_envmaps_groundprojected: a real city panorama on the horizon plus
+// environment reflections. Kept ultra-light: an LDR .jpg loaded with the CORE TextureLoader (no
+// extra addon), used as BOTH scene.background and scene.environment. Fully optional and
+// self-contained — if GFX.skybox is off, or the file is missing/404s, the procedural sky stays
+// and nothing throws. Drop panoramas in voxel-city/vendor/hdri/ (see that folder's README).
+function installSkybox(){
+  if(!GFX.skybox) return;
+  new THREE.TextureLoader().load(
+    './vendor/hdri/'+GFX.skyboxFile,
+    tex=>{
+      tex.mapping=THREE.EquirectangularReflectionMapping;
+      tex.colorSpace=THREE.SRGBColorSpace;
+      scene.background=tex; scene.environment=tex;
+      skyboxActive=true;
+      // a baked LDR photo blows out under bloom unless we tone-map; ACES keeps highlights sane
+      renderer.toneMapping=THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure=GFX.skyboxExposure;
+    },
+    undefined,
+    ()=>{ console.warn('[skybox] missing vendor/hdri/'+GFX.skyboxFile+' — keeping procedural sky'); }
+  );
+}
+installSkybox();
+
 // ---------- Day/night cycle ----------
 // timeOfDay in [0,1): 0=midnight, 0.25=sunrise, 0.5=noon, 0.75=sunset.
 let timeOfDay=0.35;                 // start mid-morning
@@ -235,14 +277,26 @@ const DAY_LENGTH=180;               // seconds per full day
 const skyDay=new THREE.Color(0x9fd3ff), skyNight=new THREE.Color(0x0a1026),
       skyDusk=new THREE.Color(0xff8c5a);
 const _tmpA=new THREE.Color(), _tmpB=new THREE.Color();
+// reusable vectors for sun-scattering fog (avoid per-frame allocation)
+const _sunDir=new THREE.Vector3(), _camFwd=new THREE.Vector3();
 function updateDayNight(dt){
-  timeOfDay=(timeOfDay+dt/DAY_LENGTH)%1;
+  // With a skybox installed, the photo's baked sun/exposure is fixed — so freeze the cycle at a
+  // time that matches the panorama (default noon) instead of letting it drift to night.
+  if(skyboxActive && GFX.skyboxLockTime) timeOfDay=GFX.skyboxTimeOfDay;
+  else timeOfDay=(timeOfDay+dt/DAY_LENGTH)%1;
   // sun elevation: peaks at noon (0.5), below horizon at night
   const ang=(timeOfDay-0.25)*Math.PI*2;       // 0 at sunrise
   const elev=Math.sin(ang);                    // -1..1
   // position the sun RELATIVE to the player so shadows render where the player is
   const fx = (typeof px==='function')?px():0, fz=(typeof pz==='function')?pz():0;
-  sun.position.set(fx+Math.cos(ang)*120, Math.max(20,elev*140), fz+60);
+  // horizontal sun vector; under a skybox, rotate it by skyboxSunAz so cast shadows line up
+  // with the sun visible in the photo. _sunHx/_sunHz are reused for the scatter-fog direction.
+  let _sunHx=Math.cos(ang)*120, _sunHz=60;
+  if(skyboxActive && GFX.skyboxSunAz){
+    const az=GFX.skyboxSunAz*Math.PI/180, ca=Math.cos(az), sa=Math.sin(az);
+    const nx=_sunHx*ca-_sunHz*sa; _sunHz=_sunHx*sa+_sunHz*ca; _sunHx=nx;
+  }
+  sun.position.set(fx+_sunHx, Math.max(20,elev*140), fz+_sunHz);
   if(sun.target){ sun.target.position.set(fx,0,fz); sun.target.updateMatrixWorld(); }
   const daylight=Math.max(0,elev);             // 0 at/under horizon, 1 at noon
   sun.intensity=0.15+daylight*1.0;
@@ -253,7 +307,23 @@ function updateDayNight(dt){
   if(elev>0){ _tmpA.copy(skyNight).lerp(skyDay,Math.min(1,elev*2)); }
   else      { _tmpA.copy(skyNight); }
   _tmpA.lerp(skyDusk,duskFactor*0.6);
-  SKY.copy(_tmpA); scene.background.copy(_tmpA); scene.fog.color.copy(_tmpA);
+  SKY.copy(_tmpA);
+  // a skybox owns scene.background; only drive it from the gradient when no skybox is active
+  if(!skyboxActive) scene.background.copy(_tmpA);
+  // ---- sun-scattering fog (idea from webgpu_custom_fog_scattering, done in WebGL color math) ----
+  // base fog = sky colour; when looking toward the sun near the horizon, push it warm; away, cooler.
+  _tmpB.copy(_tmpA);
+  if(GFX.scatterFog && elev>-0.15){
+    // sun world direction, reusing the (possibly skybox-rotated) horizontal vector from above
+    _sunDir.set(_sunHx, Math.max(0.05,elev)*120, _sunHz).normalize();
+    camera.getWorldDirection(_camFwd);
+    const toward=Math.max(0,_camFwd.dot(_sunDir));         // 1 looking at sun, 0 perpendicular/away
+    const horizon=Math.max(0,1-Math.abs(elev)*1.5);        // strongest low on the horizon
+    const warm=toward*toward*horizon*GFX.fogScatter;       // squared = tighter glow around the sun
+    _tmpB.lerp(skyDusk,warm*0.7);                           // warm tint toward the sun
+    _tmpB.lerp(skyNight, (1-toward)*horizon*GFX.fogScatter*0.12); // slight cool/desat away from it
+  }
+  scene.fog.color.copy(_tmpB);
   // night flag for headlights/window glow
   isNight = daylight<0.25;
 }
@@ -286,7 +356,47 @@ function onRoad(wx,wz){
 // (world logic imported from world.mjs — see import at top of module)
 
 const terrainMat=new THREE.MeshLambertMaterial({vertexColors:true,flatShading:true});
-const waterMat=new THREE.MeshLambertMaterial({color:0x2f72d6,transparent:true,opacity:0.7});
+// Water is Standard (not Lambert) so it picks up scene.environment reflections when a skybox is
+// active — a glassy sheen on the water is the cheapest payoff of the grounded-envmap idea.
+// With no environment set it just renders as a flat tinted surface, same as before.
+const waterMat=new THREE.MeshStandardMaterial({color:0x2f72d6,transparent:true,opacity:0.72,
+  roughness:0.18, metalness:0.0, envMapIntensity:1.0});
+// Animated waves via onBeforeCompile: a clean-room sum-of-sines heightfield is injected into the
+// Standard material's vertex stage, so we keep three's PBR lighting + env reflection + fog for
+// free and only add displacement + analytically-derived normals. Waves are a function of WORLD
+// position, so adjacent water chunks stay seamless. uTime is advanced each frame in the tick.
+if(GFX.waterWaves){
+  waterMat.onBeforeCompile=(shader)=>{
+    shader.uniforms.uTime={value:0};
+    shader.uniforms.uAmp={value:GFX.waveAmp};
+    waterMat.userData.shader=shader; // keep a handle so the tick can drive uTime
+    shader.vertexShader=shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        uniform float uTime; uniform float uAmp;
+        // 4 directional sine components; returns vec3(height, dH/dx, dH/dz) in world space
+        vec3 waterWaves(vec2 p){
+          vec4 dx=vec4( 1.0, 0.7,-0.6, 0.25);   // wave directions (x)
+          vec4 dz=vec4( 0.0, 0.7, 0.8,-0.97);   // wave directions (z)
+          vec4 k =vec4(0.08,0.14,0.22,0.35);    // spatial frequencies
+          vec4 a =vec4(0.55,0.28,0.12,0.06)*uAmp;// amplitudes (sum ~ uAmp)
+          vec4 s =vec4( 0.9, 1.3, 1.7, 2.4);    // temporal speeds
+          float h=0.0,hx=0.0,hz=0.0;
+          for(int i=0;i<4;i++){
+            float ph=k[i]*(dx[i]*p.x+dz[i]*p.y)+s[i]*uTime;
+            float c=cos(ph);
+            h += a[i]*sin(ph);
+            hx+= a[i]*k[i]*dx[i]*c;
+            hz+= a[i]*k[i]*dz[i]*c;
+          }
+          return vec3(h,hx,hz);
+        }`)
+      .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
+        { vec3 wd=waterWaves((modelMatrix*vec4(position,1.0)).xz);
+          objectNormal=normalize(vec3(-wd.y, wd.z, 1.0)); }`) // plane local +Z = world up
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        transformed.z += waterWaves((modelMatrix*vec4(position,1.0)).xz).x;`);
+  };
+}
 const buildMat=new THREE.MeshLambertMaterial({vertexColors:true,flatShading:true});
 const roadMat=new THREE.MeshLambertMaterial({vertexColors:true});
 layerMats.terrain.push(terrainMat); layerMats.water.push(waterMat);
@@ -633,14 +743,33 @@ const pedGeo=buildPedGeo();
 const pedInst=new THREE.InstancedMesh(pedGeo,new THREE.MeshLambertMaterial({vertexColors:true}),MAX_PED);
 pedInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 pedInst.frustumCulled=false; scene.add(pedInst);
-const carBodyGeo=new THREE.BoxGeometry(2.2,0.9,4);
+// Traffic car = body + cab + glass + 4 wheels (5 instanced draw calls total, any car count).
+// Cars travel along their local -Z (length along Z, width along X); wheel/glass offsets below
+// are in that local frame and get rotated by the car's heading each frame.
+const carBodyGeo=new THREE.BoxGeometry(2.1,0.62,4.2);   // lower & longer than before = sleeker
 const carBodyInst=new THREE.InstancedMesh(carBodyGeo,new THREE.MeshLambertMaterial(),MAX_CAR);
 carBodyInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 carBodyInst.frustumCulled=false; scene.add(carBodyInst);
-const carCabGeo=new THREE.BoxGeometry(1.8,0.7,1.8);
-const carCabInst=new THREE.InstancedMesh(carCabGeo,new THREE.MeshLambertMaterial({color:0x223044}),MAX_CAR);
+const carCabGeo=new THREE.BoxGeometry(1.7,0.6,2.0);     // greenhouse, set back over rear axle
+const carCabInst=new THREE.InstancedMesh(carCabGeo,new THREE.MeshLambertMaterial({color:0x1a2330}),MAX_CAR);
 carCabInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 carCabInst.frustumCulled=false; scene.add(carCabInst);
+// glazing band wrapped around the cab — dark, faintly glossy; reflects env when a skybox is on
+const carGlassGeo=new THREE.BoxGeometry(1.74,0.42,2.04);
+const carGlassInst=new THREE.InstancedMesh(carGlassGeo,
+  new THREE.MeshStandardMaterial({color:0x0c1018,roughness:0.15,metalness:0.0,
+    transparent:true,opacity:0.85,envMapIntensity:1.0}),MAX_CAR);
+carGlassInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+carGlassInst.frustumCulled=false; scene.add(carGlassInst);
+// wheels: one cylinder geo (axis baked to local X), 4 instances per car
+const carWheelGeo=new THREE.CylinderGeometry(0.34,0.34,0.26,8); carWheelGeo.rotateZ(Math.PI/2);
+const carWheelInst=new THREE.InstancedMesh(carWheelGeo,
+  new THREE.MeshLambertMaterial({color:0x0a0a0c}),MAX_CAR*4);
+carWheelInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+carWheelInst.frustumCulled=false; scene.add(carWheelInst);
+// local-frame wheel centres (x=±track, y above ground, z=±wheelbase)
+const CAR_WHEELS=[[0.95,0.34,1.35],[-0.95,0.34,1.35],[0.95,0.34,-1.35],[-0.95,0.34,-1.35]];
+const _wp=new THREE.Vector3(); // scratch for rotating a wheel offset into world space
 // per-instance color
 pedInst.instanceColor=new THREE.InstancedBufferAttribute(new Float32Array(MAX_PED*3),3);
 carBodyInst.instanceColor=new THREE.InstancedBufferAttribute(new Float32Array(MAX_CAR*3),3);
@@ -735,7 +864,8 @@ function buildChunk(cx,cz){
     if(terrainHeight(ox+sx*CHUNK*0.4, oz+sz*CHUNK*0.4) < SEA_LEVEL) hasWater=true;
   }
   if(hasWater){
-    water=new THREE.Mesh(new THREE.PlaneGeometry(CHUNK,CHUNK),waterMat);
+    const wseg=GFX.waterWaves?GFX.waterSegments:1; // subdivide only when waves need vertices
+    water=new THREE.Mesh(new THREE.PlaneGeometry(CHUNK,CHUNK,wseg,wseg),waterMat);
     water.rotation.x=-Math.PI/2; water.position.set(ox,SEA_LEVEL+0.05,oz); scene.add(water);
   }
   let bmesh=null; const bg=buildBuildingsGeo(cx,cz);
@@ -1276,8 +1406,20 @@ function startNearestJob(){
   if(!best){ toast('No job marker nearby — press F on a glowing pad'); return; }
   const j=best.job; scene.remove(j.mesh); best.job=null;
   const here={x:j.x,z:j.z};
-  function far(min,max){const a=Math.random()*Math.PI*2,r=min+Math.random()*(max-min);
-    return {x:here.x+Math.cos(a)*r,z:here.z+Math.sin(a)*r};}
+  // Pick a point [min,max] away that's on DRY LAND. The player (and cars) can't enter water
+  // (movement is blocked at terrainHeight<SEA_LEVEL), so a target in the sea is unreachable and
+  // its marker just floats on the surface — this resamples until it finds land, with a best-effort
+  // fallback to the driest candidate if we're surrounded by water (e.g. a small island).
+  function far(min,max){
+    let best=null,bestH=-Infinity;
+    for(let i=0;i<24;i++){
+      const a=Math.random()*Math.PI*2,r=min+Math.random()*(max-min);
+      const x=here.x+Math.cos(a)*r,z=here.z+Math.sin(a)*r,h=terrainHeight(x,z);
+      if(h>=SEA_LEVEL+1) return {x,z};        // comfortably on land
+      if(h>bestH){bestH=h;best={x,z};}        // remember the driest option seen
+    }
+    return best;                               // all wet: use the highest point (best effort)
+  }
   if(j.type==='delivery'){ active={type:'delivery',targets:[far(80,160)],idx:0,reward:120,label:'DELIVERY: reach the drop-off'}; }
   else if(j.type==='bounty'){ active={type:'bounty',targets:[far(60,140)],idx:0,reward:200,label:'BOUNTY: reach the target'}; }
   else if(j.type==='race'){ const t=[far(60,90)]; for(let i=0;i<2;i++)t.push(far(60,90)); active={type:'race',targets:t,idx:0,reward:300,timeLeft:45,label:'RACE: hit checkpoints in time'}; }
@@ -1428,6 +1570,7 @@ function tickInner(){
     tlightLampInst.setColorAt(i, TL_COL[tlState(L.axis,L.ix,L.iz,tNow)]); }
   if(tlightList.length && tlightLampInst.instanceColor) tlightLampInst.instanceColor.needsUpdate=true;
   updateDayNight(dt);
+  if(waterMat.userData.shader) waterMat.userData.shader.uniforms.uTime.value=tNow; // animate waves
   updateParticles(dt);
   fpsN++;fpsT+=dt; if(fpsT>=0.5){fps=Math.round(fpsN/fpsT);fpsN=0;fpsT=0;}
   if(toastT>0){toastT-=dt; if(toastT<=0)toastEl.style.display='none';}
@@ -1580,10 +1723,19 @@ function tickInner(){
       t.rot = t.axis===0 ? (t.dir>0?-Math.PI/2:Math.PI/2) : (t.dir>0?Math.PI:0);
       if(carI<MAX_CAR){
         _e.set(0,t.rot,0); _q.setFromEuler(_e);
-        _p.set(t.x,t.y+0.6,t.z); _m.compose(_p,_q,_s);
+        // body sits low; cab + glass set back & up over the rear; 4 wheels at the corners
+        _p.set(t.x,t.y+0.45,t.z); _m.compose(_p,_q,_s);
         carBodyInst.setMatrixAt(carI,_m); carBodyInst.setColorAt(carI,carColors[t.color]);
-        _p.set(t.x,t.y+1.2,t.z); _m.compose(_p,_q,_s);
+        _p.set(t.x,t.y+0.95,t.z-0.15); _m.compose(_p,_q,_s);   // -0.15 local-Z ≈ slightly rearward
         carCabInst.setMatrixAt(carI,_m);
+        _p.set(t.x,t.y+0.95,t.z-0.15); _m.compose(_p,_q,_s);
+        carGlassInst.setMatrixAt(carI,_m);
+        for(let wI=0;wI<4;wI++){
+          const o=CAR_WHEELS[wI];
+          _wp.set(o[0],0,o[2]).applyQuaternion(_q);            // rotate local offset by heading
+          _p.set(t.x+_wp.x, t.y+o[1], t.z+_wp.z); _m.compose(_p,_q,_s);
+          carWheelInst.setMatrixAt(carI*4+wI,_m);
+        }
         carI++;
       }
     }
@@ -1591,7 +1743,9 @@ function tickInner(){
   }
   // limit draws to active instance count (no need to zero-scale the rest)
   pedInst.count=pedI; carBodyInst.count=carI; carCabInst.count=carI;
+  carGlassInst.count=carI; carWheelInst.count=carI*4;
   pedInst.instanceMatrix.needsUpdate=true; carBodyInst.instanceMatrix.needsUpdate=true; carCabInst.instanceMatrix.needsUpdate=true;
+  carGlassInst.instanceMatrix.needsUpdate=true; carWheelInst.instanceMatrix.needsUpdate=true;
   if(pedInst.instanceColor)pedInst.instanceColor.needsUpdate=true;
   if(carBodyInst.instanceColor)carBodyInst.instanceColor.needsUpdate=true;
   for(const m of jobMarkers)m.rotation.y+=dt*1.5;
