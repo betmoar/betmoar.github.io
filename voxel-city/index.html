@@ -879,12 +879,16 @@ function buildChunk(cx,cz){
   const nPed=cMid>0.12?(2+(r()*4|0)):0;
   for(let i=0;i<nPed;i++){
     let px=ox+(r()-0.5)*CHUNK, pz=oz+(r()-0.5)*CHUNK;
-    const lineX=nearestLine(px), lineZ=nearestLine(pz);
-    if(r()<0.5){ px=lineX+(r()<0.5?-1:1)*(ROAD_W+1.5); }
-    else        { pz=lineZ+(r()<0.5?-1:1)*(ROAD_W+1.5); }
+    // offset to the sidewalk of an adjacent road; axis MUST match the offset coordinate so the
+    // ped walks ALONG that road (not straight off the kerb), and that road must actually exist.
+    let axis;
+    if(r()<0.5){ const lineZ=nearestLine(pz); pz=lineZ+(r()<0.5?-1:1)*(roadHalfWidth(lineZ)+1.5); axis=0;
+      if(!roadHere(px,lineZ)) continue; }          // east-west road the ped walks beside must exist
+    else        { const lineX=nearestLine(px); px=lineX+(r()<0.5?-1:1)*(roadHalfWidth(lineX)+1.5); axis=1;
+      if(!roadHere(lineX,pz)) continue; }           // north-south road must exist
     if(terrainHeight(px,pz)<SEA_LEVEL+0.3) continue;   // no peds on water
     peds.push({x:px,z:pz,y:terrainHeight(px,pz)+0.9,
-      axis:(r()<0.5?0:1),dir:(r()<0.5?1:-1),spd:1.0+r()*1.2,bx:ox,bz:oz,
+      axis,dir:(r()<0.5?1:-1),spd:1.0+r()*1.2,bx:ox,bz:oz,
       color:(r()*pedColors.length)|0,rot:0,scale:0.9+r()*0.25});
   }
   // traffic: data records, lane-snapped
@@ -895,6 +899,7 @@ function buildChunk(cx,cz){
     let px=ox+(r()-0.5)*CHUNK, pz=oz+(r()-0.5)*CHUNK;
     if(axis===0){ pz=nearestLine(pz)+dir*LANE; } else { px=nearestLine(px)+dir*LANE; }
     if(terrainHeight(px,pz)<SEA_LEVEL+0.3) continue;   // no traffic on water
+    if(!roadHere(px,pz)) continue;                     // no traffic on grass/parks (must be on a road)
     traffic.push({x:px,z:pz,y:terrainHeight(px,pz)+0.2,
       axis,dir,spd:6+r()*5,color:(r()*carColors.length)|0,
       rot:(axis===0?(dir>0?-Math.PI/2:Math.PI/2):(dir>0?Math.PI:0)),turnedAt:null});
@@ -1020,6 +1025,10 @@ const carParts={};
 scene.add(car);
 if(GFX.shadows){ car.traverse(o=>{ if(o.isMesh) o.castShadow=true; }); }
 const carState={heading:0,speed:0,x:0,z:0,roll:0};
+// Attract mode: before "CLICK TO START" the car cruises the city on autopilot.
+// `started` flips true on the first click; `auto` is the lane-following state (like NPC cars).
+let started=false;
+const auto={axis:1,dir:1,turnedAt:null};
 
 // ---------- Exhaust/dust particles (single Points cloud = 1 draw call) ----------
 const MAX_PARTS=120;
@@ -1135,9 +1144,11 @@ function updatePolice(dt){
 }
 const keys={};
 addEventListener('keydown',e=>{keys[e.code]=true;
-  if(e.code==='KeyE')toggleOrSteal(); if(e.code==='KeyF')startNearestJob();
-  if(e.code==='KeyR')cycleRadio();
-  if(e.code==='KeyB')buyUpgrade();
+  if(started){                                  // gameplay actions are inert during the attract reel
+    if(e.code==='KeyE')toggleOrSteal(); if(e.code==='KeyF')startNearestJob();
+    if(e.code==='KeyR')cycleRadio();
+    if(e.code==='KeyB')buyUpgrade();
+  }
   if(e.code==='Backquote'){ DEBUG=!DEBUG; dbgHud.style.display=DEBUG?'block':'none'; if(!DEBUG){dbgOverlay.style.display='none';
     // leaving debug: restore everything to normal
     RENDER.wireframe=false; RENDER.normals=false; RENDER.freeze=false;
@@ -1357,7 +1368,8 @@ const lock=document.getElementById('lock');
 // Pointer Lock API is absent on most mobile browsers (iOS Safari etc.) — feature-detect
 // so the tap doesn't throw, and just dismiss the overlay there (no mouse-look on touch).
 const hasPointerLock = typeof renderer.domElement.requestPointerLock === 'function';
-lock.addEventListener('click',()=>{ if(hasPointerLock) renderer.domElement.requestPointerLock(); else lock.style.display='none'; });
+lock.addEventListener('click',()=>{ started=true;   // hand the cruising car over to the player
+  if(hasPointerLock) renderer.domElement.requestPointerLock(); else lock.style.display='none'; });
 document.addEventListener('pointerlockchange',()=>{lock.style.display=document.pointerLockElement===renderer.domElement?'none':'flex';});
 addEventListener('mousemove',e=>{if(document.pointerLockElement!==renderer.domElement||player.inCar)return;
   player.yaw-=e.movementX*0.0022; player.pitch=Math.max(-1.2,Math.min(1.2,player.pitch-e.movementY*0.0022));});
@@ -1565,26 +1577,31 @@ function tickInner(){
 
   if(player.inCar!==_wasInCar){ radioCarState(player.inCar); _wasInCar=player.inCar; }
   if(player.inCar){
-    speedoEl.style.display='block';
-    const braking=keys['KeyS'], throttle=keys['KeyW'];
-    const accel=(throttle?34:0)-(braking?28:0);
-    carState.speed=(carState.speed+accel*dt)*0.96; carState.speed=Math.max(-14,Math.min(maxSpeed,carState.speed));
-    // arcade steering: responsive, grip stays high even at speed
-    const turn=(keys['KeyA']?1:0)-(keys['KeyD']?1:0);
-    const steerRate=2.4*Math.min(1,Math.abs(carState.speed)/3); // tight & quick
-    carState.heading+=turn*dt*steerRate*Math.sign(carState.speed||1);
-    const dx=-Math.sin(carState.heading)*carState.speed*dt;
-    const dz=-Math.cos(carState.heading)*carState.speed*dt;
-    const insideNow=buildingFootprintAt(carState.x,carState.z);
-    const blocked=(x,z)=> terrainHeight(x,z)<SEA_LEVEL || (!insideNow && buildingFootprintAt(x,z));
-    let moved=false;
-    if(!blocked(carState.x+dx, carState.z)){ carState.x+=dx; moved=true; }
-    if(!blocked(carState.x, carState.z+dz)){ carState.z+=dz; moved=true; }
-    if(!moved) carState.speed*=0.4;
+    speedoEl.style.display = started ? 'block' : 'none';
+    let braking=false;
+    if(started){
+      const throttle=keys['KeyW']; braking=keys['KeyS'];
+      const accel=(throttle?34:0)-(braking?28:0);
+      carState.speed=(carState.speed+accel*dt)*0.96; carState.speed=Math.max(-14,Math.min(maxSpeed,carState.speed));
+      // arcade steering: responsive, grip stays high even at speed
+      const turn=(keys['KeyA']?1:0)-(keys['KeyD']?1:0);
+      const steerRate=2.4*Math.min(1,Math.abs(carState.speed)/3); // tight & quick
+      carState.heading+=turn*dt*steerRate*Math.sign(carState.speed||1);
+      const dx=-Math.sin(carState.heading)*carState.speed*dt;
+      const dz=-Math.cos(carState.heading)*carState.speed*dt;
+      const insideNow=buildingFootprintAt(carState.x,carState.z);
+      const blocked=(x,z)=> terrainHeight(x,z)<SEA_LEVEL || (!insideNow && buildingFootprintAt(x,z));
+      let moved=false;
+      if(!blocked(carState.x+dx, carState.z)){ carState.x+=dx; moved=true; }
+      if(!blocked(carState.x, carState.z+dz)){ carState.z+=dz; moved=true; }
+      if(!moved) carState.speed*=0.4;
+      // body roll: lean away from the turn, proportional to speed
+      const targetRoll = -turn*Math.min(1,Math.abs(carState.speed)/20)*0.12;
+      carState.roll += (targetRoll-carState.roll)*Math.min(1,dt*8);
+    } else {
+      autopilotDrive(dt);   // attract reel: cruise the city on its own until CLICK TO START
+    }
     const gh=groundOrBridge(carState.x,carState.z);
-    // body roll: lean away from the turn, proportional to speed
-    const targetRoll = -turn*Math.min(1,Math.abs(carState.speed)/20)*0.12;
-    carState.roll += (targetRoll-carState.roll)*Math.min(1,dt*8);
     car.position.set(carState.x,gh+0.2,carState.z);
     car.rotation.set(0,carState.heading,carState.roll); car.visible=true;
     // brake/reverse lights
@@ -1644,10 +1661,15 @@ function tickInner(){
     if(ddx*ddx+ddz*ddz > NPC_CULL_SQ) continue; // far chunk: skip NPCs
     for(const p of c.peds){ pedCount++;
       const oxp=p.x, ozp=p.z;
-      if(p.axis===0){ p.x+=p.dir*p.spd*dt; p.z=nearestLine(p.z)+Math.sign(p.z-nearestLine(p.z)||1)*(ROAD_W+1.5); }
-      else          { p.z+=p.dir*p.spd*dt; p.x=nearestLine(p.x)+Math.sign(p.x-nearestLine(p.x)||1)*(ROAD_W+1.5); }
-      // turn back at chunk edge OR at water's edge
-      if(Math.abs(p.x-p.bx)>CHUNK/2-2||Math.abs(p.z-p.bz)>CHUNK/2-2||terrainHeight(p.x,p.z)<SEA_LEVEL+0.3){
+      // advance along the movement axis; keep pinned to the sidewalk of the road on the cross axis
+      let line;
+      if(p.axis===0){ p.x+=p.dir*p.spd*dt; line=nearestLine(p.z); p.z=line+Math.sign(p.z-line||1)*(roadHalfWidth(line)+1.5); }
+      else          { p.z+=p.dir*p.spd*dt; line=nearestLine(p.x); p.x=line+Math.sign(p.x-line||1)*(roadHalfWidth(line)+1.5); }
+      // turn back at the chunk edge ALONG TRAVEL, when the road runs out, or at water's edge.
+      // (only the travel axis is bounded — the cross axis is the fixed sidewalk offset.)
+      const moving=p.axis===0?p.x:p.z, base=p.axis===0?p.bx:p.bz;
+      const onRoadBeside=p.axis===0?roadHere(p.x,line):roadHere(line,p.z);
+      if(Math.abs(moving-base)>CHUNK/2-2||!onRoadBeside||terrainHeight(p.x,p.z)<SEA_LEVEL+0.3){
         p.x=oxp; p.z=ozp; p.dir=-p.dir;
       }
       p.y=terrainHeight(p.x,p.z)+0.05;
@@ -1681,14 +1703,21 @@ function tickInner(){
       }
       if(!stop){ if(t.axis===0) t.x+=t.dir*t.spd*dt; else t.z+=t.dir*t.spd*dt; }
       if(t.axis===0) t.z=nearestLine(t.z)+t.dir*LANE; else t.x=nearestLine(t.x)+t.dir*LANE;
-      // water ahead: revert and reverse
-      if(terrainHeight(t.x,t.z)<SEA_LEVEL+0.3){ t.x=oxt; t.z=ozt; t.dir=-t.dir; t.turnedAt=null; }
+      // water or no-road ahead (grass/parks/gaps): revert and reverse — cars stay on asphalt
+      if(terrainHeight(t.x,t.z)<SEA_LEVEL+0.3||!roadHere(t.x,t.z)){ t.x=oxt; t.z=ozt; t.dir=-t.dir; t.turnedAt=null; }
       const movingCoord = t.axis===0 ? t.x : t.z;
       const line = nearestLine(movingCoord);
       if(Math.abs(movingCoord-line) < t.spd*dt*0.9){
         if(t.turnedAt!==line){ t.turnedAt=line;
-          if(Math.random()<0.35){ const na=t.axis===0?1:0, nd=Math.random()<0.5?1:-1;
-            if(t.axis===0) t.x=line; else t.z=line; t.axis=na; t.dir=nd; } }
+          if(Math.random()<0.35){
+            // turn onto the CROSS street — but only if that road actually exists (cross-streets
+            // are sparse) and only in a direction that has road, so cars never cross onto grass.
+            const na=t.axis===0?1:0;
+            const nx=t.axis===0?line:t.x, nz=t.axis===0?t.z:line;   // snap to the junction centre
+            const probe=ROAD_W+3, dirs=[];
+            for(const nd of [1,-1]) if(roadHere(na===0?nx+nd*probe:nx, na===0?nz:nz+nd*probe)) dirs.push(nd);
+            if(dirs.length){ t.x=nx; t.z=nz; t.axis=na; t.dir=dirs[(Math.random()*dirs.length)|0]; }
+          } }
       }
       t.y=terrainHeight(t.x,t.z)+0.2;
       t.rot = t.axis===0 ? (t.dir>0?-Math.PI/2:Math.PI/2) : (t.dir>0?Math.PI:0);
@@ -1763,15 +1792,60 @@ function tick(){
   requestAnimationFrame(tick);
 }
 // Find a strong city center near origin so the player starts in the action.
-(function pickSpawn(){
-  let best=[0,0],bc=-1;
-  for(let x=-700;x<=700;x+=28)for(let z=-700;z<=700;z+=28){
-    const h=terrainHeight(x,z);
-    if(h<SEA_LEVEL+2) continue;        // require solid dry land
-    const c=cityness(x,z); if(c>bc){bc=c;best=[x,z];}
+// Attract-mode autopilot: lane-follow the road like an NPC car (reusing the same on-road
+// rules), then drive the player's carState so the existing camera/engine/exhaust just work.
+function autopilotDrive(dt){
+  const SP=11;                                   // gentle cruise speed for the intro reel
+  const oxt=carState.x, ozt=carState.z;
+  if(auto.axis===0){ carState.x+=auto.dir*SP*dt; carState.z=nearestLine(carState.z)+auto.dir*LANE; }
+  else             { carState.z+=auto.dir*SP*dt; carState.x=nearestLine(carState.x)+auto.dir*LANE; }
+  // water/off-road ahead: back off and reverse — stay on asphalt (same rule as traffic)
+  if(terrainHeight(carState.x,carState.z)<SEA_LEVEL+0.3 || !roadHere(carState.x,carState.z)){
+    carState.x=oxt; carState.z=ozt; auto.dir=-auto.dir; auto.turnedAt=null;
   }
-  carState.x=best[0]; carState.z=best[1];
-  player.x=best[0]; player.z=best[1];
+  // turn at genuine intersections only (probe the cross street like the NPC cars do)
+  const moving=auto.axis===0?carState.x:carState.z, line=nearestLine(moving);
+  if(Math.abs(moving-line)<SP*dt*0.9 && auto.turnedAt!==line){
+    auto.turnedAt=line;
+    if(Math.random()<0.4){
+      const na=auto.axis===0?1:0;
+      const nx=auto.axis===0?line:carState.x, nz=auto.axis===0?carState.z:line;
+      const probe=ROAD_W+3, dirs=[];
+      for(const nd of [1,-1]) if(roadHere(na===0?nx+nd*probe:nx, na===0?nz:nz+nd*probe)) dirs.push(nd);
+      if(dirs.length){ carState.x=nx; carState.z=nz; auto.axis=na; auto.dir=dirs[(Math.random()*dirs.length)|0]; }
+    }
+  }
+  carState.speed=SP;                             // feeds the speedo / engine / exhaust
+  // ease the body to face its travel heading (smooth cinematic turns)
+  const target = auto.axis===0 ? (auto.dir>0?-Math.PI/2:Math.PI/2) : (auto.dir>0?Math.PI:0);
+  let d=target-carState.heading; d=Math.atan2(Math.sin(d),Math.cos(d));
+  carState.heading += d*Math.min(1,dt*6);
+  carState.roll += (0-carState.roll)*Math.min(1,dt*4);
+}
+
+(function pickSpawn(){
+  // RANDOM start each load: scan around a few random centres for a real city block, then
+  // seat the car on the nearest road lane (so the attract-mode autopilot can drive away).
+  function bestCityNear(cx,cz){
+    let best=null,bc=0.34;                        // require an actual city (cityness > ~0.35)
+    for(let x=cx-360;x<=cx+360;x+=24)for(let z=cz-360;z<=cz+360;z+=24){
+      if(terrainHeight(x,z)<SEA_LEVEL+2) continue; // dry land only
+      const c=cityness(x,z); if(c>bc){bc=c;best=[x,z];}
+    }
+    return best;
+  }
+  const RANGE=3500; let spot=null;
+  for(let tries=0; tries<40 && !spot; tries++)
+    spot=bestCityNear((Math.random()*2-1)*RANGE,(Math.random()*2-1)*RANGE);
+  if(!spot) spot=bestCityNear(0,0)||[0,0];        // fallback near origin (very rare)
+  const [sx,sz]=spot, lx=nearestLine(sx), lz=nearestLine(sz);
+  let pick=null;
+  for(const dir of [1,-1]){ const cx=lx+dir*LANE; if(roadHere(cx,sz)){ pick={x:cx,z:sz,axis:1,dir}; break; } } // avenue (drive along z)
+  if(!pick) for(const dir of [1,-1]){ const cz=lz+dir*LANE; if(roadHere(sx,cz)){ pick={x:sx,z:cz,axis:0,dir}; break; } } // cross-street (along x)
+  if(!pick) pick={x:sx,z:sz,axis:1,dir:1};         // last-ditch
+  carState.x=pick.x; carState.z=pick.z; player.x=pick.x; player.z=pick.z;
+  auto.axis=pick.axis; auto.dir=pick.dir; auto.turnedAt=null;
+  carState.heading = pick.axis===0 ? (pick.dir>0?-Math.PI/2:Math.PI/2) : (pick.dir>0?Math.PI:0);
 })();
 updateChunks(carState.x,carState.z); updateRepHud(); tick();
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight); if(composer)composer.setSize(innerWidth,innerHeight);});
