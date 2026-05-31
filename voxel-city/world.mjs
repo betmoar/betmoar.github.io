@@ -102,15 +102,59 @@ export function onRoadTile(wx, wz) {
 }
 export function groundOrBridge(wx, wz) { return Math.max(terrainHeight(wx, wz), SEA_LEVEL); }
 
-// THE single road predicate: is there drivable road surface at world (wx,wz)?
-export function roadHere(wx, wz) {
+// Road SURFACE before dead-end trimming. Bitmask of which road kind(s) cover (wx,wz):
+//   1 = on an avenue (vertical line, every grid line) with city support;
+//   2 = on a cross-street (horizontal, only every CROSS_EVERY-th line) with city support.
+function roadCore(wx, wz) {
   const lx = nearestLine(wx), lz = nearestLine(wz);
   const onV = Math.abs(wx - lx) <= roadHalfWidth(lx);                       // avenue (every line)
   const onH = crossStreetLine(lz) && Math.abs(wz - lz) <= roadHalfWidth(lz); // cross-street (sparse)
-  if (!onV && !onH) return false;
-  if (terrainHeight(wx, wz) < SEA_LEVEL + ROAD_WATER_MARGIN) return false;
-  if (onV) { const a = cityness(lx - GRID_SP / 2, wz), b = cityness(lx + GRID_SP / 2, wz); if (Math.max(a, b) >= 0.3) return true; }
-  if (onH) { const a = cityness(wx, lz - GRID_SP / 2), b = cityness(wx, lz + GRID_SP / 2); if (Math.max(a, b) >= 0.3) return true; }
+  if (!onV && !onH) return 0;
+  if (terrainHeight(wx, wz) < SEA_LEVEL + ROAD_WATER_MARGIN) return 0;
+  let m = 0;
+  if (onV) { const a = cityness(lx - GRID_SP / 2, wz), b = cityness(lx + GRID_SP / 2, wz); if (Math.max(a, b) >= 0.3) m |= 1; }
+  if (onH) { const a = cityness(wx, lz - GRID_SP / 2), b = cityness(wx, lz + GRID_SP / 2); if (Math.max(a, b) >= 0.3) m |= 2; }
+  return m;
+}
+// Nearest cross-street grid lines bracketing z (cross-streets are sparse; scan a bounded window).
+const CROSS_SP = CROSS_EVERY * GRID_SP;            // cross-streets sit on multiples of this
+// Is the avenue at lineX anchored by a REAL cross-street crossing on BOTH sides of wz, within a
+// few blocks? Bridges small cityness gaps (a missing cross-street or two); only the dangling end
+// PAST the outermost crossing fails the test -> gets trimmed. Keeps the connected interior intact.
+function avenueBracketed(lineX, wz) {
+  const base = Math.round(wz / CROSS_SP) * CROSS_SP;
+  let below = false, above = false;
+  for (let s = -3; s <= 3; s++) {
+    const L = base + s * CROSS_SP;
+    if (!(roadCore(lineX, L) & 2)) continue;       // a real cross-street passes through (lineX,L)
+    if (L <= wz) below = true; if (L >= wz) above = true;
+  }
+  return below && above;
+}
+// Is the cross-street at lineZ anchored by a REAL avenue crossing on BOTH sides of wx?
+function crossBracketed(wx, lineZ) {
+  const base = Math.round(wx / GRID_SP) * GRID_SP;
+  let left = false, right = false;
+  for (let s = -3; s <= 3; s++) {
+    const L = base + s * GRID_SP;
+    if (!(roadCore(L, lineZ) & 1)) continue;       // a real avenue passes through (L,lineZ)
+    if (L <= wx) left = true; if (L >= wx) right = true;
+  }
+  return left && right;
+}
+
+// THE single road predicate: drivable road surface at (wx,wz), with dead-end stubs trimmed.
+// A tile counts as road only if its run is anchored by real crossings on both sides — so avenues
+// stop cleanly at the outermost cross-street instead of fraying into countryside/water as a comb
+// of stubs, and cross-streets stop at the outermost avenue. Brackets use the untrimmed roadCore
+// (one level, no recursion) and scan a few blocks, so small cityness gaps bridge and the fully
+// connected interior is unaffected.
+export function roadHere(wx, wz) {
+  const core = roadCore(wx, wz);
+  if (!core) return false;
+  const lx = nearestLine(wx), lz = nearestLine(wz);
+  if ((core & 1) && avenueBracketed(lx, wz)) return true;   // avenue surface anchored along z
+  if ((core & 2) && crossBracketed(wx, lz)) return true;    // cross-street surface anchored along x
   return false;
 }
 // Validated road model for a chunk.
