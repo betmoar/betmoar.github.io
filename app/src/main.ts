@@ -3,6 +3,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { detectTier, TIERS } from './core/gfx-tiers';
 import { createRenderer } from './render/renderer';
 import { ChunkManager, type ChunkMaterials } from './world-render/chunk';
+import { loadZ1Kit } from './assets/loaders';
 import { CHUNK, buildRoadNetwork } from './world/world';
 
 // ── M2 — procedural-look parity ─────────────────────────────────────────────────
@@ -43,7 +44,9 @@ const mats: ChunkMaterials = {
   road: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 }),
   building: new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8, metalness: 0.05 }),
 };
-const chunks = new ChunkManager(scene, mats, cfg.drawRings);
+// Load the authored downtown kit before streaming (it's tiny). Falls back to boxes if missing.
+const kit = await loadZ1Kit(import.meta.env.BASE_URL);
+const chunks = new ChunkManager(scene, mats, cfg.drawRings, kit);
 
 // Spawn over the nearest populated chunk (origin is often countryside/sea).
 function findStart(): { x: number; z: number } {
@@ -82,7 +85,7 @@ renderer.setAnimationLoop(() => {
 
   frames++; acc += dt;
   if (acc >= 0.5) { fps = Math.round(frames / acc); frames = 0; acc = 0; }
-  hud.textContent = `VOXEL CITY 2 — M2 parity\ntier ${tier} · ${fps} fps · chunks ${chunks.count} · focus ${focus.x.toFixed(0)},${focus.z.toFixed(0)}`;
+  hud.textContent = `VOXEL CITY 2 — M3 authored kit\ntier ${tier} · ${fps} fps · chunks ${chunks.count} · kit ${kit ? 'on' : 'box-fallback'}`;
 
   renderer.render(scene, camera);
 });
