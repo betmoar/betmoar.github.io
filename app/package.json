@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "harness": "vitest run",
-    "assets": "node tools/build-kit.mjs"
+    "assets": "node tools/build-kit.ts"
   },
   "dependencies": {
     "miniplex": "^2.0.0",
