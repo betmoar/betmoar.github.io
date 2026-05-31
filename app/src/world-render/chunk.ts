@@ -4,7 +4,7 @@ import { buildTerrainGeo } from '../render/mesh/terrain';
 import { buildRoadGeo } from '../render/mesh/roads';
 import { buildBuildingsGeo } from '../render/mesh/buildings';
 import { buildWaterGeo } from '../render/mesh/water';
-import type { Z1Kit } from '../assets/loaders';
+import type { ZoneKits } from '../assets/loaders';
 
 interface LoadedChunk { group: THREE.Group; geos: THREE.BufferGeometry[]; }
 
@@ -22,7 +22,7 @@ export class ChunkManager {
   private loaded = new Map<string, LoadedChunk>();
   private lastKey = '';
 
-  constructor(private scene: THREE.Scene, private mats: ChunkMaterials, private rings: number, private kit: Z1Kit | null) {}
+  constructor(private scene: THREE.Scene, private mats: ChunkMaterials, private rings: number, private kits: ZoneKits) {}
 
   get count(): number { return this.loaded.size; }
 
@@ -59,7 +59,7 @@ export class ChunkManager {
     const rg = buildRoadGeo(cx, cz); // world-space geo → mesh at origin
     if (rg) { geos.push(rg); const m = new THREE.Mesh(rg, this.mats.road); m.receiveShadow = true; group.add(m); }
 
-    const bg = buildBuildingsGeo(cx, cz, this.kit);
+    const bg = buildBuildingsGeo(cx, cz, this.kits);
     if (bg) { geos.push(bg); const m = new THREE.Mesh(bg, this.mats.building); m.castShadow = true; m.receiveShadow = true; group.add(m); }
 
     const wg = buildWaterGeo(cx, cz);

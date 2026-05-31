@@ -6,7 +6,7 @@ import { createPost } from './render/post';
 import { DayNight } from './render/daynight';
 import { createWater } from './render/mesh/water';
 import { ChunkManager, type ChunkMaterials } from './world-render/chunk';
-import { loadZ1Kit } from './assets/loaders';
+import { loadAssets } from './assets/loaders';
 import { updateTraffic } from './sim/traffic';
 import { updatePeds } from './sim/peds';
 import { CarInstances, PedInstances } from './render/instances';
@@ -59,11 +59,11 @@ const mats: ChunkMaterials = {
   water: water.material,
 };
 
-const kit = await loadZ1Kit(import.meta.env.BASE_URL);
-const chunks = new ChunkManager(scene, mats, cfg.drawRings, kit);
+const assets = await loadAssets(import.meta.env.BASE_URL);
+const chunks = new ChunkManager(scene, mats, cfg.drawRings, assets.kits);
 
 const post = createPost(renderer, scene, camera, tier);
-const carInstances = new CarInstances(scene);
+const carInstances = new CarInstances(scene, assets.vehicle);
 const pedInstances = new PedInstances(scene);
 
 function findStart(): { x: number; z: number } {

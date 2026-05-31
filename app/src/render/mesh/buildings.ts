@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CHUNK, GRID_SP, buildingAt, valueNoise } from '../../world/world';
 import { selectKit, type KitHeights } from '../../world-render/place-buildings';
-import type { Z1Kit } from '../../assets/loaders';
+import type { ZoneKits } from '../../assets/loaders';
 
 type V3 = [number, number, number];
 
@@ -43,16 +43,14 @@ function districtPalette(x: number, z: number): V3[] {
   return [[0.42, 0.44, 0.46], [0.38, 0.40, 0.42], [0.46, 0.47, 0.48], [0.34, 0.36, 0.38]];
 }
 
-// M3 buildings: zone-1 (downtown) buildings are assembled from authored kit modules via the
-// deterministic selectKit; other zones stay zone-coloured boxes (their kits arrive later). If the
-// kit failed to load, everything falls back to boxes.
-export function buildBuildingsGeo(cx: number, cz: number, kit: Z1Kit | null): THREE.BufferGeometry | null {
+// Buildings: every zone is assembled from its authored kit modules via the deterministic selectKit;
+// a building falls back to a zone-coloured box only if its zone's kit failed to load.
+export function buildBuildingsGeo(cx: number, cz: number, kits: ZoneKits): THREE.BufferGeometry | null {
   const ox = cx * CHUNK, oz = cz * CHUNK;
   const P: number[] = [], N: number[] = [], C: number[] = [];
   let any = false;
   const startX = Math.floor((ox - CHUNK / 2) / GRID_SP) * GRID_SP + GRID_SP / 2;
   const startZ = Math.floor((oz - CHUNK / 2) / GRID_SP) * GRID_SP + GRID_SP / 2;
-  const kh: KitHeights | null = kit ? { groundH: kit.ground.height, midHeights: kit.mids.map((m) => m.height), roofH: kit.roof.height } : null;
 
   for (let lx = startX; lx < ox + CHUNK / 2; lx += GRID_SP) {
     for (let lz = startZ; lz < oz + CHUNK / 2; lz += GRID_SP) {
@@ -60,9 +58,10 @@ export function buildBuildingsGeo(cx: number, cz: number, kit: Z1Kit | null): TH
       if (!B) continue;
       const pal = districtPalette(lx, lz);
       const base = pal[(Math.abs(Math.round(lx) + Math.round(lz) * 3) % pal.length)];
+      const kit = kits[B.zn];
 
-      if (kit && kh && B.zn === 1) {
-        // authored downtown tower assembled from kit modules
+      if (kit) {
+        const kh: KitHeights = { groundH: kit.ground.height, midHeights: kit.mids.map((m) => m.height), roofH: kit.roof.height };
         for (const f of selectKit(lx, lz, B.lowG, B.hgt, kh)) {
           const geo = f.role === 'ground' ? kit.ground.geo : f.role === 'roof' ? kit.roof.geo : kit.mids[f.variant].geo;
           const col: V3 = f.role === 'roof' ? [base[0] * 0.7, base[1] * 0.7, base[2] * 0.7] : base;
