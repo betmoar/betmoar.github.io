@@ -7,7 +7,7 @@ import { DayNight } from './render/daynight';
 import { createWater } from './render/mesh/water';
 import { ChunkManager, type ChunkMaterials } from './world-render/chunk';
 import { loadAssets } from './assets/loaders';
-import { updateTraffic } from './sim/traffic';
+import { updateTraffic, setSpawnMin } from './sim/traffic';
 import { updatePeds } from './sim/peds';
 import { CarInstances, PedInstances } from './render/instances';
 import type { PhysicsWorld } from './physics/rapier';
@@ -30,7 +30,9 @@ renderer.toneMapping = THREE.NoToneMapping; // AgX moves into the post chain (af
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9fd3ff);
-scene.fog = new THREE.Fog(0x9fd3ff, CHUNK * cfg.drawRings * 0.95, CHUNK * cfg.drawRings * 1.7);
+const fogNear = CHUNK * cfg.drawRings * 0.95;
+scene.fog = new THREE.Fog(0x9fd3ff, fogNear, CHUNK * cfg.drawRings * 1.7);
+setSpawnMin(fogNear); // traffic only spawns beyond the fog line so cars never pop in on-screen
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.5, CHUNK * (cfg.drawRings + 2));
 
