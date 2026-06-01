@@ -11,7 +11,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 const EYE = 0.7; // eye offset above the capsule centre
 
 export class CameraController {
-  mode: 'auto' | 'fly' | 'walk' = 'auto';
+  mode: 'auto' | 'fly' | 'walk' | 'static' = 'auto';
   focus = new THREE.Vector3();
   private yaw: number;
   private pitch = -0.15;
@@ -32,9 +32,9 @@ export class CameraController {
       if (e.code === 'KeyG' && document.pointerLockElement === canvas) this.toggleWalkFly();
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
-    canvas.addEventListener('click', () => { if (this.mode === 'auto') canvas.requestPointerLock(); });
+    canvas.addEventListener('click', () => { if (this.mode === 'auto' || this.mode === 'static') canvas.requestPointerLock(); });
     document.addEventListener('pointerlockchange', () => {
-      if (document.pointerLockElement === canvas) { if (this.mode === 'auto') { this.mode = 'fly'; this.yaw = this.heading; } }
+      if (document.pointerLockElement === canvas) { if (this.mode === 'auto' || this.mode === 'static') { this.mode = 'fly'; } }
       else this.mode = 'auto';
     });
     document.addEventListener('mousemove', (e) => {
@@ -48,6 +48,17 @@ export class CameraController {
   }
 
   attachWalker(physics: PhysicsWorld, walker: Character): void { this.physics = physics; this.walker = walker; }
+
+  // Debug fly-to: park the camera at a fixed pose looking at a target (drives chunk streaming via
+  // focus). Used by the ?cam=x,y,z,tx,ty,tz URL param to inspect specific coordinates. Clicking the
+  // canvas still hands off to pointer-lock fly from this pose.
+  setStatic(x: number, y: number, z: number, tx: number, ty: number, tz: number): void {
+    this.mode = 'static';
+    this.camera.position.set(x, y, z);
+    this.camera.lookAt(tx, ty, tz);
+    this.focus.set(x, 0, z);
+    this.yaw = Math.atan2(x - tx, z - tz); // so fly mode continues from this heading
+  }
 
   setMode(mode: 'auto' | 'fly' | 'walk'): void { if (mode !== 'walk' || this.walker) this.mode = mode; }
 
@@ -85,6 +96,7 @@ export class CameraController {
       this.focus.set(t.x, 0, t.z);
       return;
     }
+    if (this.mode === 'static') return; // camera fixed; click to take over (fly)
     if (this.mode === 'auto') {
       const speed = 16;
       this.focus.x += Math.cos(this.heading) * speed * dt;

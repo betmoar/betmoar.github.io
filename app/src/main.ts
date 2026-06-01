@@ -84,6 +84,9 @@ const start = findStart();
 const controls = new CameraController(camera, canvas, start);
 if (params.get('mode') === 'fly') controls.setMode('fly');
 if (params.get('mode') === 'walk') pendingWalk = true; // applied once physics + character exist
+// ?cam=x,y,z,tx,ty,tz — park the camera at a fixed pose to inspect specific coords (debug fly-to).
+const camArg = params.get('cam');
+if (camArg) { const c = camArg.split(',').map(Number); if (c.length === 6 && c.every(Number.isFinite)) controls.setStatic(c[0], c[1], c[2], c[3], c[4], c[5]); }
 
 // kick off physics load in the background via dynamic import — keeps Rapier's large WASM chunk OFF
 // the critical path so the city paints immediately; physics + walk mode light up a moment later.
