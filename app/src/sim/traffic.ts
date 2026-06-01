@@ -5,7 +5,13 @@ import { LANE, ROAD_W, SEA_LEVEL, nearestRoadLineX, nearestRoadLineZ, roadHere, 
 // (not every grid line, now that blocks span several lots), reverse at road ends, turn only where a
 // real crossing exists. Constant local population that respawns near the streaming focus. Density
 // tuned down (roads are sparser now) so the grid doesn't feel jammed.
-const TARGET = 60, RANGE = 150, MAXD = 220, PALETTE = 5;
+const TARGET = 60, PALETTE = 5;
+// Cars spawn only in the far band [SPAWN_MIN, SPAWN_MAX] around the focus (SPAWN_MIN ≈ fog-start)
+// so they appear in haze / behind the camera and drive INTO view — never popping in on-screen.
+// SPAWN_MAX is kept a fixed margin beyond SPAWN_MIN so the band is always valid across tiers; MAXD
+// (recycle distance) sits just beyond it.
+let SPAWN_MIN = 95, SPAWN_MAX = 165, MAXD = 200;
+export function setSpawnMin(d: number): void { SPAWN_MIN = d; SPAWN_MAX = d + 70; MAXD = d + 110; }
 
 function rot(axis: 0 | 1, dir: 1 | -1): number {
   return axis === 0 ? (dir > 0 ? -Math.PI / 2 : Math.PI / 2) : (dir > 0 ? Math.PI : 0);
@@ -13,15 +19,18 @@ function rot(axis: 0 | 1, dir: 1 | -1): number {
 // lane centre offset from a road line: drive on the right, but never outside the asphalt half-width
 const lane = (): number => Math.min(LANE, ROAD_W - 0.8);
 
-// Try to place a car on a real road tile near (fx,fz). Returns a Car or null.
+// Try to place a car on a real road tile in the far band [SPAWN_MIN, SPAWN_MAX] around (fx,fz) —
+// off screen / in fog. Returns a Car or null.
 function trySpawn(fx: number, fz: number): Car | null {
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 24; i++) {
     const axis: 0 | 1 = Math.random() < 0.55 ? 1 : 0;
     const dir: 1 | -1 = Math.random() < 0.5 ? 1 : -1;
-    const along = (Math.random() - 0.5) * RANGE * 2;
+    const along = (Math.random() - 0.5) * SPAWN_MAX * 2;
     let x: number, z: number;
-    if (axis === 1) { const lx = nearestRoadLineX(fx + (Math.random() - 0.5) * RANGE * 2); x = lx + dir * lane(); z = fz + along; }
-    else { const lz = nearestRoadLineZ(fz + (Math.random() - 0.5) * RANGE * 2); z = lz + dir * lane(); x = fx + along; }
+    if (axis === 1) { const lx = nearestRoadLineX(fx + (Math.random() - 0.5) * SPAWN_MAX * 2); x = lx + dir * lane(); z = fz + along; }
+    else { const lz = nearestRoadLineZ(fz + (Math.random() - 0.5) * SPAWN_MAX * 2); z = lz + dir * lane(); x = fx + along; }
+    const d = Math.hypot(x - fx, z - fz);
+    if (d < SPAWN_MIN || d > SPAWN_MAX) continue; // keep spawns in the far off-screen band
     if (roadHere(x, z) && terrainHeight(x, z) >= SEA_LEVEL + 0.3) {
       return { x, z, y: terrainHeight(x, z) + 0.2, rot: rot(axis, dir), axis, dir, spd: 6 + Math.random() * 6, color: (Math.random() * PALETTE) | 0, turnedAt: null };
     }
